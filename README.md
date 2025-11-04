@@ -22,3 +22,23 @@ This respitory will serve as the general workspace for all changes, updates, and
   -   Meeting ID: 874 3942 4208
   -   Passcode: 7epwSw
 - **Github Repo:** https://github.com/LastDanceCapstone/better-todo-app
+
+
+# Prioritize – Setup & Run App Guide
+
+- cd mobile
+- npm install
+
+start Expo:
+- npx expo start --tunnel (Don't need to include --tunnel if you're mobile device and computer are on same network)
+
+
+Install Expo Go from the App Store / Play Store.
+
+Run npx expo start --tunnel in the mobile/ folder.
+
+A QR code will show in the terminal.
+
+Open camera on your phone - Scan the QR Code
+
+This should open straight to the Home/Dashboard Screen
