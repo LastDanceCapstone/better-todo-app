@@ -1,12 +1,5 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
@@ -14,49 +7,51 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-
 model User {
   id        String   @id @default(cuid())
-  email     String   @unique
-  password  String
   firstName String?
   lastName  String?
-  tasks     Task[]
-
+  email     String   @unique
+  password  String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  tasks     Task[]
+
+  @@map("users")
 }
 
 model Task {
   id          String    @id @default(cuid())
   title       String
   description String?
-  dueDate     DateTime?
+  status      Status    @default(ACTIVE)
   priority    Priority  @default(MEDIUM)
-  status      TaskStatus @default(TODO)
-  user        User      @relation(fields: [userId], references: [id])
-  userId      String
-  subtasks    Subtask[]
-
+  dueDate     DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  userId      String
+  subtasks    Subtask[]
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("tasks")
 }
 
 model Subtask {
-  id        String   @id @default(cuid())
-  title     String
-  done      Boolean  @default(false)
-  task      Task     @relation(fields: [taskId], references: [id])
-  taskId    String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  isCompleted Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  taskId      String
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@map("subtasks")
 }
 
-enum TaskStatus {
-  TODO
-  IN_PROGRESS
+enum Status {
+  ACTIVE
   COMPLETED
-  CANCELLED
 }
 
 enum Priority {
@@ -64,4 +59,3 @@ enum Priority {
   MEDIUM
   HIGH
 }
-
