@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
-  TextInput,
   TouchableOpacity,
   StyleSheet,
   KeyboardAvoidingView,
@@ -12,6 +11,7 @@ import {
   Alert
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
+import CustomTextInput from '../../components/CustomTextInput';
 
 export default function LoginScreen({ navigation }: any) {
   const [isLogin, setIsLogin] = useState(true);
@@ -31,7 +31,6 @@ export default function LoginScreen({ navigation }: any) {
   };
 
   const handleSubmit = () => {
-    // Validation
     if (!formData.email || !validateEmail(formData.email)) {
       Alert.alert('Error', 'Please enter a valid email');
       return;
@@ -55,7 +54,6 @@ export default function LoginScreen({ navigation }: any) {
 
     setIsSubmitting(true);
 
-    // Simulate API call
     setTimeout(() => {
       setIsSubmitting(false);
       Alert.alert(
@@ -95,8 +93,8 @@ export default function LoginScreen({ navigation }: any) {
             {isLogin ? 'Welcome Back' : 'Create Account'}
           </Text>
           <Text style={styles.cardSubtitle}>
-            {isLogin 
-              ? 'Sign in to continue to your dashboard' 
+            {isLogin
+              ? 'Sign in to continue to your dashboard'
               : 'Start organizing your tasks today'}
           </Text>
 
@@ -105,21 +103,23 @@ export default function LoginScreen({ navigation }: any) {
             <View style={styles.nameRow}>
               <View style={styles.nameInput}>
                 <Text style={styles.label}>First Name</Text>
-                <TextInput
-                  style={styles.input}
+                <CustomTextInput
                   placeholder="John"
                   value={formData.firstName}
-                  onChangeText={(text) => setFormData({...formData, firstName: text})}
+                  onChangeText={(text) =>
+                    setFormData({ ...formData, firstName: text })
+                  }
                   autoCapitalize="words"
                 />
               </View>
               <View style={styles.nameInput}>
                 <Text style={styles.label}>Last Name</Text>
-                <TextInput
-                  style={styles.input}
+                <CustomTextInput
                   placeholder="Doe"
                   value={formData.lastName}
-                  onChangeText={(text) => setFormData({...formData, lastName: text})}
+                  onChangeText={(text) =>
+                    setFormData({ ...formData, lastName: text })
+                  }
                   autoCapitalize="words"
                 />
               </View>
@@ -129,11 +129,12 @@ export default function LoginScreen({ navigation }: any) {
           {/* Email */}
           <View style={styles.formGroup}>
             <Text style={styles.label}>Email</Text>
-            <TextInput
-              style={styles.input}
+            <CustomTextInput
               placeholder="you@example.com"
               value={formData.email}
-              onChangeText={(text) => setFormData({...formData, email: text})}
+              onChangeText={(text) =>
+                setFormData({ ...formData, email: text })
+              }
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
@@ -143,37 +144,39 @@ export default function LoginScreen({ navigation }: any) {
           {/* Password */}
           <View style={styles.formGroup}>
             <Text style={styles.label}>Password</Text>
-            <View style={styles.passwordContainer}>
-              <TextInput
-                style={styles.passwordInput}
-                placeholder="••••••••"
-                value={formData.password}
-                onChangeText={(text) => setFormData({...formData, password: text})}
-                secureTextEntry={!showPassword}
-                autoCapitalize="none"
-              />
-              <TouchableOpacity
-                style={styles.eyeIcon}
-                onPress={() => setShowPassword(!showPassword)}
-              >
-                {showPassword ? (
-                  <MaterialIcons name="visibility-off" size={20} color="#9CA3AF" />
+            <CustomTextInput
+              placeholder="••••••••"
+              value={formData.password}
+              onChangeText={(text) =>
+                setFormData({ ...formData, password: text })
+              }
+              secureTextEntry={!showPassword}
+              autoCapitalize="none"
+              rightActionIcon={
+                showPassword ? (
+                  <MaterialIcons
+                    name="visibility-off"
+                    size={20}
+                    color="#9CA3AF"
+                  />
                 ) : (
                   <MaterialIcons name="visibility" size={20} color="#9CA3AF" />
-                )}
-              </TouchableOpacity>
-            </View>
+                )
+              }
+              onRightActionPress={() => setShowPassword((prev) => !prev)}
+            />
           </View>
 
           {/* Confirm Password (Registration only) */}
           {!isLogin && (
             <View style={styles.formGroup}>
               <Text style={styles.label}>Confirm Password</Text>
-              <TextInput
-                style={styles.input}
+              <CustomTextInput
                 placeholder="••••••••"
                 value={formData.confirmPassword}
-                onChangeText={(text) => setFormData({...formData, confirmPassword: text})}
+                onChangeText={(text) =>
+                  setFormData({ ...formData, confirmPassword: text })
+                }
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"
               />
@@ -299,32 +302,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#374151',
     marginBottom: 8,
-  },
-  input: {
-    backgroundColor: '#F9FAFB',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 12,
-    padding: 14,
-    fontSize: 16,
-  },
-  passwordContainer: {
-    position: 'relative',
-  },
-  passwordInput: {
-    backgroundColor: '#F9FAFB',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 12,
-    padding: 14,
-    paddingRight: 50,
-    fontSize: 16,
-  },
-  eyeIcon: {
-    position: 'absolute',
-    right: 14,
-    top: 14,
-    padding: 4,
   },
   forgotPassword: {
     alignItems: 'flex-end',
