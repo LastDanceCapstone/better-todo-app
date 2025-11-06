@@ -1,0 +1,6 @@
+- Pulled the latest UI and LoginScreen files from London’s branch.
+- Added a reusable CustomTextInput component under mobile/components.
+- Updated LoginScreen to use CustomTextInput for consistent styling and password visibility.
+- No backend or navigation logic was changed.
+- Tested locally; login and register UI functional.
+- Currently working on adding TextInput fields for creating and editing tasks (in progress).
