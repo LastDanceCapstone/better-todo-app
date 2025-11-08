@@ -1,79 +1,181 @@
 // src/screens/HomeScreen.tsx
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, FlatList, StyleSheet } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, TouchableOpacity, FlatList, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// Update the API base URL to match your current IP
+const API_BASE_URL = 'XXXXXXXXXXX';
 
 type Task = {
   id: string;
   title: string;
   description: string;
-  due?: string;
+  dueDate?: string;
   status: 'ACTIVE' | 'COMPLETED';
   priority?: 'LOW' | 'MEDIUM' | 'HIGH';
-  timeLeft?: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
-const MOCK_TASKS: Task[] = [
-  {
-    id: '1',
-    title: 'Complete Math Homework',
-    description: 'Complete Homework 2 for Math Class.',
-    due: 'Oct 31',
-    status: 'ACTIVE',
-    priority: 'HIGH',
-    timeLeft: '2 days left',
-  },
-  {
-    id: '2',
-    title: 'Grocery Run',
-    description: 'Take the created grocery list and go shopping.',
-    due: 'Nov 1',
-    status: 'ACTIVE',
-    priority: 'MEDIUM',
-    timeLeft: '3 days left',
-  },
-  {
-    id: '3',
-    title: 'Submit Research Proposal',
-    description: 'Submit final draft of research proposal.',
-    due: 'Nov 5',
-    status: 'ACTIVE',
-    priority: 'LOW',
-    timeLeft: '7 days left',
-  },
-  {
-    id: '4',
-    title: 'Clean Completed Tasks',
-    description: 'Clean up completed tasks.',
-    due: 'Oct 29',
-    status: 'COMPLETED',
-    priority: 'LOW',
-    timeLeft: 'Overdue',
-  },
-];
-
-export default function HomeScreen() {
+export default function HomeScreen({ route }: any) {
   const [tab, setTab] = useState<'ACTIVE' | 'COMPLETED'>('ACTIVE');
-  const [activeNav, setActiveNav] = useState('Home'); // State to track active navigation tab
+  const [activeNav, setActiveNav] = useState('Home');
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<any>(null);
 
-  const filteredTasks = MOCK_TASKS.filter((t) =>
+  // Get user data from route params or AsyncStorage
+  useEffect(() => {
+    const getUserData = async () => {
+      try {
+        // First try to get from route params (when coming from login)
+        if (route?.params?.user) {
+          setUser(route.params.user);
+        } else {
+          // Otherwise get from AsyncStorage
+          const storedUser = await AsyncStorage.getItem('user');
+          if (storedUser) {
+            setUser(JSON.parse(storedUser));
+          }
+        }
+      } catch (error) {
+        console.error('Error getting user data:', error);
+      }
+    };
+
+    getUserData();
+  }, [route]);
+
+  // Fetch tasks from backend
+  const fetchTasks = async () => {
+    try {
+      setLoading(true);
+      
+      // Get token from AsyncStorage
+      const token = await AsyncStorage.getItem('authToken');
+      
+      if (!token) {
+        Alert.alert('Error', 'No authentication token found. Please log in again.');
+        return;
+      }
+
+      console.log('Fetching tasks with token:', token.substring(0, 20) + '...');
+
+      const response = await fetch(`${API_BASE_URL}/api/tasks`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      console.log('Tasks response status:', response.status);
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Tasks data received:', data);
+        setTasks(data.tasks || []);
+      } else {
+        const errorData = await response.json();
+        console.error('Tasks fetch error:', errorData);
+        
+        if (response.status === 401) {
+          Alert.alert('Session Expired', 'Please log in again.');
+          // Could navigate back to login here
+        } else {
+          Alert.alert('Error', errorData.error || 'Failed to load tasks');
+        }
+      }
+    } catch (error) {
+      console.error('Network error fetching tasks:', error);
+      Alert.alert('Error', 'Failed to load tasks. Please check your connection.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Fetch tasks when component mounts
+  useEffect(() => {
+    fetchTasks();
+  }, []);
+
+  // Helper function to format due date
+  const formatDueDate = (dueDate?: string) => {
+    if (!dueDate) return 'No due date';
+    
+    const date = new Date(dueDate);
+    const now = new Date();
+    const diffTime = date.getTime() - now.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    if (diffDays < 0) {
+      return 'Overdue';
+    } else if (diffDays === 0) {
+      return 'Due today';
+    } else if (diffDays === 1) {
+      return 'Due tomorrow';
+    } else {
+      return `${diffDays} days left`;
+    }
+  };
+
+  // Helper function to format due date for display
+  const formatDisplayDate = (dueDate?: string) => {
+    if (!dueDate) return 'No due date';
+    
+    const date = new Date(dueDate);
+    return date.toLocaleDateString('en-US', { 
+      month: 'short', 
+      day: 'numeric' 
+    });
+  };
+
+  const filteredTasks = tasks.filter((t) =>
     tab === 'ACTIVE' ? t.status === 'ACTIVE' : t.status === 'COMPLETED'
   );
+
+  // Get welcome message
+  const welcomeMessage = user 
+    ? `Welcome back, ${user.firstName} 👋` 
+    : 'Welcome back 👋';
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+          <ActivityIndicator size="large" color="#4E8FFF" />
+          <Text style={{ marginTop: 16, fontSize: 16 }}>Loading your tasks...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <View style={styles.titleContainer}>
-          <Text style={styles.welcome}>Welcome back, London 👋</Text>
-          <Text style={styles.subtitle}>Let’s get things done today 💪</Text>
-        </View>
+        <View style={styles.headerContent}>
+          {/* Avatar */}
+          <View style={styles.avatarContainer}>
+            <MaterialIcons name="account-circle" size={48} color="#E0E0E0" />
+          </View>
+          
+          {/* Title Container */}
+          <View style={styles.titleContainer}>
+            <Text style={styles.greeting}>Hello!</Text>
+            <Text style={styles.welcome}>{user?.firstName || 'User'} 👋</Text>
+          </View>
 
-        {/* Notifications Icon */}
-        <TouchableOpacity style={styles.notificationsIcon} onPress={() => alert('Notifications clicked!')}>
-          <MaterialIcons name="notifications" size={24} color="#000000" />
-        </TouchableOpacity>
+          {/* Notifications Icon */}
+          <TouchableOpacity 
+            style={styles.notificationsIcon} 
+            onPress={() => alert('Notifications clicked!')}
+          >
+            <MaterialIcons name="notifications" size={24} color="#000000" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Tabs */}
@@ -82,54 +184,80 @@ export default function HomeScreen() {
           style={[styles.tab, tab === 'ACTIVE' && styles.tabActive]}
           onPress={() => setTab('ACTIVE')}
         >
-          <Text style={[styles.tabText, tab === 'ACTIVE' && styles.tabTextActive]}>Active</Text>
+          <Text style={[styles.tabText, tab === 'ACTIVE' && styles.tabTextActive]}>
+            Active ({tasks.filter(t => t.status === 'ACTIVE').length})
+          </Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.tab, tab === 'COMPLETED' && styles.tabActive]}
           onPress={() => setTab('COMPLETED')}
         >
-          <Text style={[styles.tabText, tab === 'COMPLETED' && styles.tabTextActive]}>Completed</Text>
+          <Text style={[styles.tabText, tab === 'COMPLETED' && styles.tabTextActive]}>
+            Completed ({tasks.filter(t => t.status === 'COMPLETED').length})
+          </Text>
         </TouchableOpacity>
       </View>
 
       {/* Task List */}
-      <FlatList
-        data={filteredTasks}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={{ paddingBottom: 120 }}
-        renderItem={({ item }) => (
-          <View style={styles.taskCard}>
-            {/* Priority Tag */}
-            {item.priority && (
-              <View style={[styles.badge, styles[`priority${item.priority}`]]}>
-                <Text style={[styles.badgeText, styles[`priorityText${item.priority}`]]}>
-                  {item.priority}
+      {filteredTasks.length === 0 ? (
+        <View style={styles.emptyState}>
+          <MaterialIcons 
+            name={tab === 'ACTIVE' ? "assignment" : "check-circle"} 
+            size={48} 
+            color="#ccc" 
+          />
+          <Text style={styles.emptyText}>
+            {tab === 'ACTIVE' ? 'No active tasks yet!' : 'No completed tasks yet!'}
+          </Text>
+          <Text style={styles.emptySubtext}>
+            {tab === 'ACTIVE' ? 'Create your first task to get started.' : 'Complete some tasks to see them here.'}
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          data={filteredTasks}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={{ paddingBottom: 120 }}
+          refreshing={loading}
+          onRefresh={fetchTasks}
+          renderItem={({ item }) => (
+            <View style={styles.taskCard}>
+              {/* Priority Tag */}
+              {item.priority && (
+                <View style={[styles.badge, styles[`priority${item.priority}`]]}>
+                  <Text style={[styles.badgeText, styles[`priorityText${item.priority}`]]}>
+                    {item.priority}
+                  </Text>
+                </View>
+              )}
+
+              {/* Task Content */}
+              <View>
+                <Text style={styles.taskTitle}>{item.title}</Text>
+                <Text style={styles.taskDescription}>
+                  {item.description || 'No description'}
                 </Text>
               </View>
-            )}
 
-            {/* Task Content */}
-            <View>
-              <Text style={styles.taskTitle}>{item.title}</Text>
-              <Text style={styles.taskDescription}>{item.description}</Text>
-            </View>
+              {/* Black Line */}
+              <View style={styles.separator} />
 
-            {/* Black Line */}
-            <View style={styles.separator} />
-
-            {/* Bottom Section */}
-            <View style={styles.taskFooter}>
-              <View style={styles.footerLeft}>
-                <MaterialIcons name="access-time" size={16} color="grey" />
-                <Text style={styles.timeLeft}>{item.timeLeft}</Text>
+              {/* Bottom Section */}
+              <View style={styles.taskFooter}>
+                <View style={styles.footerLeft}>
+                  <MaterialIcons name="access-time" size={16} color="grey" />
+                  <Text style={styles.timeLeft}>{formatDueDate(item.dueDate)}</Text>
+                </View>
+                <Text style={styles.dueDate}>
+                  Due: {formatDisplayDate(item.dueDate)}
+                </Text>
               </View>
-              <Text style={styles.dueDate}>Due Date: {item.due}</Text>
             </View>
-          </View>
-        )}
-      />
+          )}
+        />
+      )}
 
-      {/* Bottom Navigation */}
+      {/* Bottom Navigation - Same as before */}
       <View style={styles.bottomNav}>
         <TouchableOpacity
           style={styles.navItem}
@@ -138,12 +266,12 @@ export default function HomeScreen() {
           <MaterialIcons
             name="home"
             size={24}
-            color={activeNav === 'Home' ? '#2563EB' : '#000000'} // Change color based on active state
+            color={activeNav === 'Home' ? '#2563EB' : '#000000'}
           />
           <Text
             style={[
               styles.navText,
-              activeNav === 'Home' && styles.navTextActive, // Change text color based on active state
+              activeNav === 'Home' && styles.navTextActive,
             ]}
           >
             Home
@@ -217,17 +345,37 @@ const styles = StyleSheet.create({
     padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#000000',
-    position: 'relative', // Allows absolute positioning of the notifications icon
+  },
+  headerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between', 
+  },
+  avatarContainer: {
+    backgroundColor: '#F5F5F5',
+    borderRadius: 24,
+    width: 48,
+    height: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   titleContainer: {
-    marginRight: 40, // Add space to avoid overlap with the notifications icon
+    flex: 1,
+    marginLeft: 12, 
   },
-  welcome: { fontSize: 20, fontWeight: '700', color: '#000000' },
+  greeting: { 
+    fontSize: 14, 
+    color: '#000000', 
+    marginBottom: 2 
+  },
+  welcome: { 
+    fontSize: 20, 
+    fontWeight: '700', 
+    color: '#000000' 
+  },
   subtitle: { fontSize: 11, color: '#000000', marginTop: 4 },
   notificationsIcon: {
-    position: 'absolute',
-    top: 16,
-    right: 16,
+    padding: 8, 
   },
   tabs: { flexDirection: 'row', justifyContent: 'space-around', marginVertical: 16 },
   tab: {
@@ -242,15 +390,18 @@ const styles = StyleSheet.create({
   taskCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
-    padding: 16,
+    padding: 20, 
     marginHorizontal: 16,
-    marginBottom: 12,
+    marginBottom: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.25,
     shadowRadius: 4,
     elevation: 4,
-    position: 'relative', // Required for absolute positioning of priority tags
+    position: 'relative',
+  
+    borderWidth: 1,
+    borderColor: '#E5E5E5', 
   },
   taskTitle: { fontSize: 16, fontWeight: '700', color: '#000000' },
   taskDescription: { fontSize: 12, color: '#000000', marginTop: 4 },
@@ -281,7 +432,7 @@ const styles = StyleSheet.create({
   badgeText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#FFFFFF', // Default text color for badges
+    color: '#FFFFFF',
   },
   priorityHIGH: { backgroundColor: 'rgba(255, 53, 53, 0.3)' },
   priorityMEDIUM: { backgroundColor: 'rgba(255, 184, 0, 0.3)' },
@@ -304,5 +455,25 @@ const styles = StyleSheet.create({
   },
   navItem: { alignItems: 'center' },
   navText: { fontSize: 12, color: '#000000', marginTop: 4 },
-  navTextActive: { color: '#2563EB' }, // Active text color
+  navTextActive: { color: '#2563EB' },
+  
+
+  emptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingBottom: 120,
+  },
+  emptyText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#666',
+    marginTop: 16,
+  },
+  emptySubtext: {
+    fontSize: 14,
+    color: '#999',
+    marginTop: 8,
+    textAlign: 'center',
+  },
 });

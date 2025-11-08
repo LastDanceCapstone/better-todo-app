@@ -12,6 +12,10 @@ import {
   Alert
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+
+const API_BASE_URL = 'XXXXXXXXXXX';
 
 export default function LoginScreen({ navigation }: any) {
   const [isLogin, setIsLogin] = useState(true);
@@ -30,7 +34,7 @@ export default function LoginScreen({ navigation }: any) {
     return re.test(email);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     // Validation
     if (!formData.email || !validateEmail(formData.email)) {
       Alert.alert('Error', 'Please enter a valid email');
@@ -55,20 +59,98 @@ export default function LoginScreen({ navigation }: any) {
 
     setIsSubmitting(true);
 
-    // Simulate API call
-    setTimeout(() => {
-      setIsSubmitting(false);
-      Alert.alert(
-        'Success',
-        isLogin ? 'Login successful!' : 'Registration successful!',
-        [
-          {
-            text: 'OK',
-            onPress: () => navigation.replace('Home', { email: formData.email })
+    try {
+      const endpoint = isLogin ? '/api/login' : '/api/register';
+      const payload = isLogin 
+        ? { 
+            email: formData.email, 
+            password: formData.password 
           }
-        ]
-      );
-    }, 1500);
+        : {
+            firstName: formData.firstName,
+            lastName: formData.lastName,
+            email: formData.email,
+            password: formData.password
+          };
+
+      console.log('Making request to:', `${API_BASE_URL}${endpoint}`);
+      console.log('Payload:', payload);
+
+      // Add timeout and better error handling
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        console.log('Request timeout - aborting');
+        controller.abort();
+      }, 15000); // 15 second timeout
+
+      console.log('About to make fetch request...');
+
+      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      console.log('Response received!');
+      console.log('Response status:', response.status);
+      console.log('Response ok:', response.ok);
+
+      const data = await response.json();
+      console.log('Response data:', data);
+
+      if (response.ok) {
+        // Store token and user data locally
+        await AsyncStorage.setItem('authToken', data.token);
+        await AsyncStorage.setItem('user', JSON.stringify(data.user));
+
+        Alert.alert(
+          'Success',
+          isLogin ? 'Login successful!' : 'Registration successful!',
+          [
+            {
+              text: 'OK',
+              onPress: () => navigation.replace('Home', { 
+                email: formData.email,
+                token: data.token,
+                user: data.user 
+              })
+            }
+          ]
+        );
+      } else {
+        Alert.alert('Error', data.error || 'Something went wrong');
+      }
+    } catch (error: any) {
+      console.error('Network error details:', error);
+      console.error('Error name:', error.name);
+      console.error('Error message:', error.message);
+      
+      if (error.name === 'AbortError') {
+        Alert.alert(
+          'Timeout Error',
+          'Request timed out after 15 seconds. This usually means:\n\n1. Backend server is not running\n2. Wrong IP address\n3. Firewall is blocking the connection'
+        );
+      } else if (error.message.includes('Network request failed')) {
+        Alert.alert(
+          'Connection Error',
+          `Cannot connect to server at ${API_BASE_URL}\n\nPlease check:\n\n1. Backend is running on port 3000\n2. You\'re on the same WiFi network\n3. Windows Firewall allows port 3000\n4. IP address is correct (${API_BASE_URL})`
+        );
+      } else if (error.message.includes('fetch')) {
+        Alert.alert(
+          'Network Error',
+          `Fetch failed: ${error.message}\n\nThis usually indicates a connectivity issue.`
+        );
+      } else {
+        Alert.alert('Error', `Unexpected error: ${error.message}`);
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
