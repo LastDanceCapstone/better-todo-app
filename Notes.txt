@@ -1,0 +1,34 @@
+Hey Team, now that we've established some stories:
+
+Deevya - CreateTask UI
+Johnathan - AccountDetails UI
+Samwel- TaskDetails UI
+
+If y'all can, try to push it to Github by Dec 1st which is a few days before our sprint meeting.
+I think it'll be best to have everything organized ahead of time.
+
+If you want a Mockup or any help so you don't have to think of the design from scratch just let me know on the side and I can draw one up for you.
+
+Have a good Thanksgiving break 🙏
+
+
+####
+
+In order for it to work make sure you update the ip address from xxxxx to match it. 
+Always run the npm expo on mobile
+
+####
+
+For database i had to install postgresql using the following on the main terminal
+
+'brew install postgresql@13'
+'brew services start postgresql@13' 
+
+then to create a db i had to run 'createdb todoapp' in the main terminal
+
+## to verify if it worked i ran 
+
+'which createdb' this will show something like this 
+/opt/homebrew/opt/postgresql@13/bin/createdb
+
+## to know if the db was acc created succcesffuly i ran  'psql -l' this will show the db created

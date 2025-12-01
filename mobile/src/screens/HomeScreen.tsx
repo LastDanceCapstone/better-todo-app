@@ -19,7 +19,7 @@ type Task = {
   updatedAt: string;
 };
 
-export default function HomeScreen({ route }: any) {
+export default function HomeScreen({ route, navigation }: any) {
   const [tab, setTab] = useState<'ACTIVE' | 'COMPLETED'>('ACTIVE');
   const [activeNav, setActiveNav] = useState('Home');
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -221,7 +221,11 @@ export default function HomeScreen({ route }: any) {
           refreshing={loading}
           onRefresh={fetchTasks}
           renderItem={({ item }) => (
-            <View style={styles.taskCard}>
+            <TouchableOpacity
+              style={styles.taskCard}
+              onPress={() => navigation.navigate('TaskDetails', { task: item })}
+              activeOpacity={0.7}
+            >
               {/* Priority Tag */}
               {item.priority && (
                 <View style={[styles.badge, styles[`priority${item.priority}`]]}>
@@ -252,7 +256,7 @@ export default function HomeScreen({ route }: any) {
                   Due: {formatDisplayDate(item.dueDate)}
                 </Text>
               </View>
-            </View>
+            </TouchableOpacity>
           )}
         />
       )}
