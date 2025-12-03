@@ -1,57 +1,88 @@
 // src/index.ts
 import express from 'express';
-import cors from 'cors';
 import dotenv from 'dotenv';
-import authRouter from './routes/auth';
-import tasksRouter from './routes/tasks';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './swagger';
+import authRoutes from './routes/auth';
+import taskRoutes from './routes/tasks';
+import cors from 'cors';
 
 dotenv.config();
 
 const app = express();
-const PORT = Number(process.env.PORT) || 3000; // Convert to number
+const PORT = Number(process.env.PORT) || 3000;
 
 // Middleware
+app.use(cors());
 app.use(express.json());
-app.use(cors({
-  origin: '*', // Allow all origins for development
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+
+
+// Debug: Log what's in the swagger spec
+console.log('=== SWAGGER SPEC CHECK ===');
+console.log('Swagger paths:', Object.keys((swaggerSpec as any).paths || {}));
+console.log('Total endpoints:', Object.keys((swaggerSpec as any).paths || {}).length);
+
+// Serve raw Swagger spec as JSON for debugging (BEFORE swagger UI middleware)
+app.get('/api/docs.json', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.json(swaggerSpec);
+});
+
+// Swagger Documentation UI
+app.use('/api/docs', swaggerUi.serve);
+app.get('/api/docs', swaggerUi.setup(swaggerSpec, {
+  explorer: true,
+  customCss: '.swagger-ui .topbar { display: none }',
+  customSiteTitle: 'Prioritize API Documentation',
+  swaggerOptions: {
+    persistAuthorization: true,
+  },
 }));
 
-// Add request logging middleware for debugging
-app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
-  console.log('Headers:', req.headers);
-  if (req.body && Object.keys(req.body).length > 0) {
-    console.log('Body:', req.body);
-  }
-  next();
+// API Routes
+app.use('/api', authRoutes);
+app.use('/api', taskRoutes);
+
+// Health check
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    message: 'Prioritize API is running',
+    timestamp: new Date().toISOString(),
+  });
 });
 
-// Health check (public route)
-app.get('/api/health', (_req, res) => {
-  console.log('Health check requested');
-  res.json({ status: 'OK', message: 'Server is running' });
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'Welcome to Prioritize API',
+    version: '1.0.0',
+    documentation: '/api/docs',
+    rawSpec: '/api/docs.json',
+    endpoints: {
+      auth: {
+        register: 'POST /api/register',
+        login: 'POST /api/login',
+        profile: 'GET /api/user/profile',
+      },
+      tasks: {
+        getAll: 'GET /api/tasks',
+        create: 'POST /api/tasks',
+        update: 'PATCH /api/tasks/:id',
+        delete: 'DELETE /api/tasks/:id',
+      },
+      subtasks: {
+        create: 'POST /api/tasks/:id/subtasks',
+        update: 'PATCH /api/subtasks/:id',
+        delete: 'DELETE /api/subtasks/:id',
+      },
+    },
+  });
 });
 
-// Mount routes
-app.use('/api', authRouter);
-app.use('/api', tasksRouter);
-
-// Swagger API docs
-app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-
-// Start server and bind to all network interfaces
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log(`🌐 Available on your network at http://100.100.66.139:${PORT}`);
-  console.log(`📚 API docs available at http://100.100.66.139:${PORT}/api/docs`);
-});
-
-// shutdown
-process.on('SIGINT', async () => {
-  console.log('\n👋 Shutting down gracefully...');
-  process.exit();
+  console.log(`Server running on http://0.0.0.0:${PORT}`);
+  console.log(`Local access: http://localhost:${PORT}`);
+  console.log(`Network access: http://100.100.66.131:${PORT}`);
+  console.log(`📚 API Documentation: http://100.100.66.131:${PORT}/api/docs`);
 });

@@ -27,8 +27,8 @@ const authenticateToken = (req: any, res: any, next: any) => {
  * @swagger
  * /tasks:
  *   get:
- *     summary: Get all tasks for the current user
  *     tags: [Tasks]
+ *     summary: Get all tasks for the current user
  *     security:
  *       - bearerAuth: []
  *     responses:
@@ -72,8 +72,8 @@ router.get('/tasks', authenticateToken, async (req: any, res) => {
  * @swagger
  * /tasks:
  *   post:
- *     summary: Create a new task
  *     tags: [Tasks]
+ *     summary: Create a new task
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -90,11 +90,15 @@ router.get('/tasks', authenticateToken, async (req: any, res) => {
  *                 example: Complete project
  *               description:
  *                 type: string
- *                 example: Finish the todo app project
+ *                 example: Finish the todo app
  *               priority:
  *                 type: string
  *                 enum: [LOW, MEDIUM, HIGH]
  *                 example: HIGH
+ *               status:
+ *                 type: string
+ *                 enum: [ACTIVE, COMPLETED]
+ *                 example: ACTIVE
  *               dueDate:
  *                 type: string
  *                 format: date-time
@@ -121,13 +125,14 @@ router.post('/tasks', authenticateToken, async (req: any, res) => {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-    const { title, description, priority, dueDate } = req.body;
+    const { title, description, priority, status, dueDate } = req.body;
 
     const task = await prisma.task.create({
       data: {
         title,
         description,
         priority: priority || 'MEDIUM',
+        status: status || 'ACTIVE',
         dueDate: dueDate ? new Date(dueDate) : null,
         userId,
       },
@@ -137,6 +142,389 @@ router.post('/tasks', authenticateToken, async (req: any, res) => {
     return res.status(201).json({ task });
   } catch (error) {
     console.error('Create task error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * @swagger
+ * /tasks/{id}:
+ *   patch:
+ *     tags: [Tasks]
+ *     summary: Update a task
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Task ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               title:
+ *                 type: string
+ *                 example: Updated task
+ *               description:
+ *                 type: string
+ *                 example: Updated description
+ *               priority:
+ *                 type: string
+ *                 enum: [LOW, MEDIUM, HIGH]
+ *               status:
+ *                 type: string
+ *                 enum: [ACTIVE, COMPLETED]
+ *               dueDate:
+ *                 type: string
+ *                 format: date-time
+ *     responses:
+ *       200:
+ *         description: Task updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 task:
+ *                   $ref: '#/components/schemas/Task'
+ *       404:
+ *         description: Task not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+router.patch('/tasks/:id', authenticateToken, async (req: any, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { id } = req.params;
+    const { title, description, priority, status, dueDate } = req.body;
+
+    const existingTask = await prisma.task.findUnique({
+      where: { id },
+    });
+
+    if (!existingTask) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    if (existingTask.userId !== userId) {
+      return res.status(403).json({ error: 'You do not have permission to update this task' });
+    }
+
+    const updateData: any = {};
+    if (title !== undefined) updateData.title = title;
+    if (description !== undefined) updateData.description = description;
+    if (priority !== undefined) updateData.priority = priority;
+    if (status !== undefined) updateData.status = status;
+    if (dueDate !== undefined) updateData.dueDate = dueDate ? new Date(dueDate) : null;
+
+    const task = await prisma.task.update({
+      where: { id },
+      data: updateData,
+      include: { subtasks: true },
+    });
+
+    return res.json({ task });
+  } catch (error) {
+    console.error('Update task error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * @swagger
+ * /tasks/{id}:
+ *   delete:
+ *     tags: [Tasks]
+ *     summary: Delete a task
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Task ID
+ *     responses:
+ *       200:
+ *         description: Task deleted successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *       404:
+ *         description: Task not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+router.delete('/tasks/:id', authenticateToken, async (req: any, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { id } = req.params;
+
+    const existingTask = await prisma.task.findUnique({
+      where: { id },
+    });
+
+    if (!existingTask) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    if (existingTask.userId !== userId) {
+      return res.status(403).json({ error: 'You do not have permission to delete this task' });
+    }
+
+    await prisma.task.delete({
+      where: { id },
+    });
+
+    return res.json({ message: 'Task deleted successfully' });
+  } catch (error) {
+    console.error('Delete task error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * @swagger
+ * /tasks/{id}/subtasks:
+ *   post:
+ *     tags: [Subtasks]
+ *     summary: Create a subtask for a task
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Task ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - title
+ *             properties:
+ *               title:
+ *                 type: string
+ *                 example: Review code
+ *               isCompleted:
+ *                 type: boolean
+ *                 example: false
+ *     responses:
+ *       201:
+ *         description: Subtask created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 subtask:
+ *                   $ref: '#/components/schemas/Subtask'
+ *       404:
+ *         description: Task not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+router.post('/tasks/:id/subtasks', authenticateToken, async (req: any, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { id } = req.params;
+    const { title, isCompleted } = req.body;
+
+    const task = await prisma.task.findUnique({
+      where: { id },
+    });
+
+    if (!task) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    if (task.userId !== userId) {
+      return res.status(403).json({ error: 'You do not have permission to add subtasks to this task' });
+    }
+
+    const subtask = await prisma.subtask.create({
+      data: {
+        title,
+        isCompleted: isCompleted || false,
+        taskId: id,
+      },
+    });
+
+    return res.status(201).json({ subtask });
+  } catch (error) {
+    console.error('Create subtask error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * @swagger
+ * /subtasks/{id}:
+ *   patch:
+ *     tags: [Subtasks]
+ *     summary: Update a subtask
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Subtask ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               title:
+ *                 type: string
+ *                 example: Updated subtask
+ *               isCompleted:
+ *                 type: boolean
+ *                 example: true
+ *     responses:
+ *       200:
+ *         description: Subtask updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 subtask:
+ *                   $ref: '#/components/schemas/Subtask'
+ *       404:
+ *         description: Subtask not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+router.patch('/subtasks/:id', authenticateToken, async (req: any, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { id } = req.params;
+    const { title, isCompleted } = req.body;
+
+    const existingSubtask = await prisma.subtask.findUnique({
+      where: { id },
+      include: { task: true },
+    });
+
+    if (!existingSubtask) {
+      return res.status(404).json({ error: 'Subtask not found' });
+    }
+
+    if (existingSubtask.task.userId !== userId) {
+      return res.status(403).json({ error: 'You do not have permission to update this subtask' });
+    }
+
+    const updateData: any = {};
+    if (title !== undefined) updateData.title = title;
+    if (isCompleted !== undefined) updateData.isCompleted = isCompleted;
+
+    const subtask = await prisma.subtask.update({
+      where: { id },
+      data: updateData,
+    });
+
+    return res.json({ subtask });
+  } catch (error) {
+    console.error('Update subtask error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * @swagger
+ * /subtasks/{id}:
+ *   delete:
+ *     tags: [Subtasks]
+ *     summary: Delete a subtask
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Subtask ID
+ *     responses:
+ *       200:
+ *         description: Subtask deleted successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *       404:
+ *         description: Subtask not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+router.delete('/subtasks/:id', authenticateToken, async (req: any, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { id } = req.params;
+
+    const existingSubtask = await prisma.subtask.findUnique({
+      where: { id },
+      include: { task: true },
+    });
+
+    if (!existingSubtask) {
+      return res.status(404).json({ error: 'Subtask not found' });
+    }
+
+    if (existingSubtask.task.userId !== userId) {
+      return res.status(403).json({ error: 'You do not have permission to delete this subtask' });
+    }
+
+    await prisma.subtask.delete({
+      where: { id },
+    });
+
+    return res.json({ message: 'Subtask deleted successfully' });
+  } catch (error) {
+    console.error('Delete subtask error:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });

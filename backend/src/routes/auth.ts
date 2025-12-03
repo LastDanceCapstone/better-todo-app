@@ -28,8 +28,8 @@ const authenticateToken = (req: any, res: any, next: any) => {
  * @swagger
  * /register:
  *   post:
- *     summary: Register a new user
  *     tags: [Authentication]
+ *     summary: Register a new user
  *     requestBody:
  *       required: true
  *       content:
@@ -37,28 +37,25 @@ const authenticateToken = (req: any, res: any, next: any) => {
  *           schema:
  *             type: object
  *             required:
- *               - firstName
- *               - lastName
  *               - email
  *               - password
  *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: user@example.com
+ *               password:
+ *                 type: string
+ *                 example: password123
  *               firstName:
  *                 type: string
  *                 example: John
  *               lastName:
  *                 type: string
  *                 example: Doe
- *               email:
- *                 type: string
- *                 format: email
- *                 example: john@example.com
- *               password:
- *                 type: string
- *                 minLength: 6
- *                 example: password123
  *     responses:
  *       201:
- *         description: User created successfully
+ *         description: User registered successfully
  *         content:
  *           application/json:
  *             schema:
@@ -71,7 +68,7 @@ const authenticateToken = (req: any, res: any, next: any) => {
  *                 user:
  *                   $ref: '#/components/schemas/User'
  *       400:
- *         description: User already exists or validation error
+ *         description: Bad request
  *         content:
  *           application/json:
  *             schema:
@@ -81,7 +78,6 @@ router.post('/register', async (req, res) => {
   try {
     const { firstName, lastName, email, password } = req.body;
 
-    // Check if user already exists
     const existingUser = await prisma.user.findUnique({
       where: { email }
     });
@@ -90,10 +86,8 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'User already exists with this email' });
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create user
     const user = await prisma.user.create({
       data: {
         firstName,
@@ -103,7 +97,6 @@ router.post('/register', async (req, res) => {
       },
     });
 
-    // Generate token
     const token = jwt.sign(
       { userId: user.id, email: user.email },
       process.env.JWT_SECRET!,
@@ -130,8 +123,8 @@ router.post('/register', async (req, res) => {
  * @swagger
  * /login:
  *   post:
- *     summary: Login user
  *     tags: [Authentication]
+ *     summary: Login user
  *     requestBody:
  *       required: true
  *       content:
@@ -145,7 +138,7 @@ router.post('/register', async (req, res) => {
  *               email:
  *                 type: string
  *                 format: email
- *                 example: john@example.com
+ *                 example: user@example.com
  *               password:
  *                 type: string
  *                 example: password123
@@ -174,7 +167,6 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Find user
     const user = await prisma.user.findUnique({
       where: { email }
     });
@@ -183,13 +175,11 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    // Check password
     const isValidPassword = await bcrypt.compare(password, user.password);
     if (!isValidPassword) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    // Generate token
     const token = jwt.sign(
       { userId: user.id, email: user.email },
       process.env.JWT_SECRET!,
@@ -216,13 +206,13 @@ router.post('/login', async (req, res) => {
  * @swagger
  * /user/profile:
  *   get:
+ *     tags: [Authentication]
  *     summary: Get current user profile
- *     tags: [User]
  *     security:
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: User profile retrieved successfully
+ *         description: User profile retrieved
  *         content:
  *           application/json:
  *             schema:
@@ -231,7 +221,7 @@ router.post('/login', async (req, res) => {
  *                 user:
  *                   $ref: '#/components/schemas/User'
  *       401:
- *         description: Unauthorized - missing or invalid token
+ *         description: Unauthorized
  *         content:
  *           application/json:
  *             schema:
