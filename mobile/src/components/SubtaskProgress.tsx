@@ -3,7 +3,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 
 interface SubtaskProgressProps {
-  subtasks?: Array<{ isCompleted: boolean }>;
+  subtasks?: Array<{ status: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' }>;
   size?: number;
   strokeWidth?: number;
 }
@@ -19,7 +19,7 @@ export default function SubtaskProgress({
   }
 
   const totalSubtasks = subtasks.length;
-  const completedSubtasks = subtasks.filter(s => s.isCompleted).length;
+  const completedSubtasks = subtasks.filter(s => s.status === 'COMPLETED').length;
   const completionRatio = completedSubtasks / totalSubtasks;
   const completionPercent = Math.round(completionRatio * 100);
 

@@ -93,13 +93,13 @@ router.get('/tasks', authenticateToken, async (req: any, res) => {
  *                 example: Finish the todo app
  *               priority:
  *                 type: string
- *                 enum: [LOW, MEDIUM, HIGH]
+ *                 enum: [LOW, MEDIUM, HIGH, URGENT]
  *                 example: HIGH
  *               status:
  *                 type: string
- *                 enum: [ACTIVE, COMPLETED]
- *                 example: ACTIVE
- *               dueDate:
+ *                 enum: [TODO, IN_PROGRESS, COMPLETED, CANCELLED]
+ *                 example: TODO
+ *               dueAt:
  *                 type: string
  *                 format: date-time
  *                 example: 2024-12-31T23:59:59Z
@@ -125,15 +125,15 @@ router.post('/tasks', authenticateToken, async (req: any, res) => {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-    const { title, description, priority, status, dueDate } = req.body;
+    const { title, description, priority, status, dueAt } = req.body;
 
     const task = await prisma.task.create({
       data: {
         title,
         description,
         priority: priority || 'MEDIUM',
-        status: status || 'ACTIVE',
-        dueDate: dueDate ? new Date(dueDate) : null,
+        status: status || 'TODO',
+        dueAt: dueAt ? new Date(dueAt) : null,
         userId,
       },
       include: { subtasks: true },
@@ -176,11 +176,14 @@ router.post('/tasks', authenticateToken, async (req: any, res) => {
  *                 example: Updated description
  *               priority:
  *                 type: string
- *                 enum: [LOW, MEDIUM, HIGH]
+ *                 enum: [LOW, MEDIUM, HIGH, URGENT]
  *               status:
  *                 type: string
- *                 enum: [ACTIVE, COMPLETED]
- *               dueDate:
+ *                 enum: [TODO, IN_PROGRESS, COMPLETED, CANCELLED]
+ *               dueAt:
+ *                 type: string
+ *                 format: date-time
+ *               completedAt:
  *                 type: string
  *                 format: date-time
  *     responses:
@@ -206,7 +209,7 @@ router.patch('/tasks/:id', authenticateToken, async (req: any, res) => {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     const { id } = req.params;
-    const { title, description, priority, status, dueDate } = req.body;
+    const { title, description, priority, status, dueAt, completedAt } = req.body;
 
     const existingTask = await prisma.task.findUnique({
       where: { id },
@@ -224,8 +227,12 @@ router.patch('/tasks/:id', authenticateToken, async (req: any, res) => {
     if (title !== undefined) updateData.title = title;
     if (description !== undefined) updateData.description = description;
     if (priority !== undefined) updateData.priority = priority;
-    if (status !== undefined) updateData.status = status;
-    if (dueDate !== undefined) updateData.dueDate = dueDate ? new Date(dueDate) : null;
+    if (status !== undefined) {
+      updateData.status = status;
+      updateData.statusChangedAt = new Date();
+    }
+    if (dueAt !== undefined) updateData.dueAt = dueAt ? new Date(dueAt) : null;
+    if (completedAt !== undefined) updateData.completedAt = completedAt ? new Date(completedAt) : null;
 
     const task = await prisma.task.update({
       where: { id },
@@ -329,9 +336,10 @@ router.delete('/tasks/:id', authenticateToken, async (req: any, res) => {
  *               title:
  *                 type: string
  *                 example: Review code
- *               isCompleted:
- *                 type: boolean
- *                 example: false
+ *               status:
+ *                 type: string
+ *                 enum: [TODO, IN_PROGRESS, COMPLETED, CANCELLED]
+ *                 example: TODO
  *     responses:
  *       201:
  *         description: Subtask created successfully
@@ -355,7 +363,7 @@ router.post('/tasks/:id/subtasks', authenticateToken, async (req: any, res) => {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     const { id } = req.params;
-    const { title, isCompleted } = req.body;
+    const { title, description, status } = req.body;
 
     const task = await prisma.task.findUnique({
       where: { id },
@@ -372,7 +380,8 @@ router.post('/tasks/:id/subtasks', authenticateToken, async (req: any, res) => {
     const subtask = await prisma.subtask.create({
       data: {
         title,
-        isCompleted: isCompleted || false,
+        description,
+        status: status || 'TODO',
         taskId: id,
       },
     });
@@ -409,9 +418,16 @@ router.post('/tasks/:id/subtasks', authenticateToken, async (req: any, res) => {
  *               title:
  *                 type: string
  *                 example: Updated subtask
- *               isCompleted:
- *                 type: boolean
- *                 example: true
+ *               description:
+ *                 type: string
+ *                 example: Updated description
+ *               status:
+ *                 type: string
+ *                 enum: [TODO, IN_PROGRESS, COMPLETED, CANCELLED]
+ *                 example: COMPLETED
+ *               completedAt:
+ *                 type: string
+ *                 format: date-time
  *     responses:
  *       200:
  *         description: Subtask updated successfully
@@ -435,7 +451,7 @@ router.patch('/subtasks/:id', authenticateToken, async (req: any, res) => {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     const { id } = req.params;
-    const { title, isCompleted } = req.body;
+    const { title, description, status, completedAt } = req.body;
 
     const existingSubtask = await prisma.subtask.findUnique({
       where: { id },
@@ -452,7 +468,9 @@ router.patch('/subtasks/:id', authenticateToken, async (req: any, res) => {
 
     const updateData: any = {};
     if (title !== undefined) updateData.title = title;
-    if (isCompleted !== undefined) updateData.isCompleted = isCompleted;
+    if (description !== undefined) updateData.description = description;
+    if (status !== undefined) updateData.status = status;
+    if (completedAt !== undefined) updateData.completedAt = completedAt ? new Date(completedAt) : null;
 
     const subtask = await prisma.subtask.update({
       where: { id },

@@ -7,19 +7,21 @@ import SubtaskProgress from './SubtaskProgress';
 interface Task {
   id: string;
   title: string;
-  description: string;
-  dueDate?: string;
-  status: 'ACTIVE' | 'COMPLETED';
-  priority?: 'LOW' | 'MEDIUM' | 'HIGH';
-  subtasks?: Array<{ id: string; title: string; isCompleted: boolean }>;
+  description?: string;
+  dueAt?: string;
+  completedAt?: string;
+  statusChangedAt?: string;
+  status: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+  priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+  subtasks?: Array<{ id: string; title: string; status: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' }>;
 }
 
 interface SwipeableTaskCardProps {
   task: Task;
   onPress: () => void;
-  onStatusChange: (taskId: string, newStatus: 'ACTIVE' | 'COMPLETED') => void;
-  formatDueDate: (dueDate?: string) => string;
-  formatDisplayDate: (dueDate?: string) => string;
+  onStatusChange: (taskId: string, newStatus: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED') => void;
+  formatDueDate: (dueAt?: string) => string;
+  formatDisplayDate: (dueAt?: string) => string;
 }
 
 export default function SwipeableTaskCard({
@@ -74,7 +76,7 @@ export default function SwipeableTaskCard({
   };
 
   const handleSwipeComplete = (direction: 'left' | 'right') => {
-    const newStatus = direction === 'right' ? 'COMPLETED' : 'ACTIVE';
+    const newStatus = direction === 'right' ? 'COMPLETED' : 'TODO';
     
     // Directly change status without confirmation
     onStatusChange(task.id, newStatus);
@@ -84,7 +86,7 @@ export default function SwipeableTaskCard({
   return (
     <Swipeable
       ref={swipeableRef}
-      renderRightActions={task.status === 'ACTIVE' ? renderRightActions : undefined}
+      renderRightActions={task.status === 'TODO' || task.status === 'IN_PROGRESS' ? renderRightActions : undefined}
       renderLeftActions={task.status === 'COMPLETED' ? renderLeftActions : undefined}
       onSwipeableOpen={(direction) => handleSwipeComplete(direction as 'left' | 'right')}
       overshootRight={false}
@@ -122,12 +124,12 @@ export default function SwipeableTaskCard({
           {/* Left side: Days left */}
           <View style={styles.dateInfo}>
             <MaterialIcons name="access-time" size={16} color="grey" />
-            <Text style={styles.timeLeft}>{formatDueDate(task.dueDate)}</Text>
+            <Text style={styles.timeLeft}>{formatDueDate(task.dueAt)}</Text>
           </View>
 
           {/* Right side: Due date */}
           <Text style={styles.dueDate}>
-            Due: {formatDisplayDate(task.dueDate)}
+            Due: {formatDisplayDate(task.dueAt)}
           </Text>
         </View>
 
@@ -219,6 +221,8 @@ const styles = StyleSheet.create({
   priorityTextHIGH: { color: '#FF4D4D' },
   priorityTextMEDIUM: { color: '#FFB800' },
   priorityTextLOW: { color: '#00C853' },
+  priorityURGENT: { backgroundColor: 'rgba(255, 23, 68, 0.3)' },
+  priorityTextURGENT: { color: '#FF1744' },
   rightAction: {
     backgroundColor: '#00C853',
     justifyContent: 'center',

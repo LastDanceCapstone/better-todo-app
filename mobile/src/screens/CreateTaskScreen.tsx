@@ -19,8 +19,8 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 // Update the API base URL to match your current IP
 const API_BASE_URL = 'http://100.100.66.131:3000';
 
-type Priority = 'LOW' | 'MEDIUM' | 'HIGH';
-type Status = 'ACTIVE' | 'COMPLETED';
+type Priority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+type Status = 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
 
 interface SubtaskInput {
   id: string;
@@ -70,7 +70,7 @@ export default function CreateTaskScreen({ navigation }: any) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState<Priority>('MEDIUM');
-  const [status, setStatus] = useState<Status>('ACTIVE');
+  const [status, setStatus] = useState<Status>('TODO');
   const [dueDate, setDueDate] = useState('');
   const [hasSubtasks, setHasSubtasks] = useState(false);
   const [subtaskInputs, setSubtaskInputs] = useState<SubtaskInput[]>([
@@ -185,7 +185,7 @@ export default function CreateTaskScreen({ navigation }: any) {
         description: description.trim() || undefined,
         priority,
         status,
-        dueDate: normalizedDueDate,
+        dueAt: normalizedDueDate,
       };
 
       console.log('Creating task with data:', taskData);
@@ -217,7 +217,7 @@ export default function CreateTaskScreen({ navigation }: any) {
               const subtaskData = {
                 title: subtask.title.trim(),
                 description: subtask.description?.trim() || undefined,
-                isCompleted: false,
+                status: 'TODO',
               };
 
               console.log('Sending subtask data:', subtaskData);
@@ -251,7 +251,7 @@ export default function CreateTaskScreen({ navigation }: any) {
         setTitle('');
         setDescription('');
         setPriority('MEDIUM');
-        setStatus('ACTIVE');
+        setStatus('TODO');
         setDueDate('');
         setHasSubtasks(false);
         setSubtaskInputs([{ id: `subtask-${Date.now()}`, title: '', description: '' }]);
@@ -473,7 +473,7 @@ export default function CreateTaskScreen({ navigation }: any) {
           {/* Status Dropdown Options */}
           {showStatusPicker && (
             <View style={styles.dropdownMenu}>
-              {(['ACTIVE', 'COMPLETED'] as Status[]).map((statusOption) => (
+              {(['TODO', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'] as Status[]).map((statusOption) => (
                 <TouchableOpacity
                   key={statusOption}
                   style={[

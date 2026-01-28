@@ -16,7 +16,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 
-const API_BASE_URL = 'http://100.100.66.131:3000';
+const API_BASE_URL = 'http://100.100.66.165:3000';
 
 interface UserProfile {
   id: string;

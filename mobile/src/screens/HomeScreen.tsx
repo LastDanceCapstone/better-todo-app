@@ -8,22 +8,36 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import SwipeableTaskCard from '../components/SwipeableTaskCard';
 
 // Update the API base URL to match your current IP
-const API_BASE_URL = 'http://100.100.66.131:3000';
+const API_BASE_URL = 'http://100.100.66.165:3000';
 
 type Task = {
   id: string;
   title: string;
-  description: string;
-  dueDate?: string;
-  status: 'ACTIVE' | 'COMPLETED';
-  priority?: 'LOW' | 'MEDIUM' | 'HIGH';
+  description?: string;
+  dueAt?: string;
+  completedAt?: string;
+  statusChangedAt?: string;
+  status: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+  priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
   createdAt: string;
   updatedAt: string;
-  subtasks?: Array<{ id: string; title: string; isCompleted: boolean }>;
+  userId: string;
+  subtasks?: Subtask[];
+};
+
+type Subtask = {
+  id: string;
+  title: string;
+  description?: string;
+  status: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+  completedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  taskId: string;
 };
 
 export default function HomeScreen({ route, navigation }: any) {
-  const [tab, setTab] = useState<'ACTIVE' | 'COMPLETED'>('ACTIVE');
+  const [tab, setTab] = useState<'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'>('TODO');
   const [activeNav, setActiveNav] = useState('Home');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -121,7 +135,7 @@ export default function HomeScreen({ route, navigation }: any) {
   };
 
   // Handle status change
-  const handleStatusChange = async (taskId: string, newStatus: 'ACTIVE' | 'COMPLETED') => {
+  const handleStatusChange = async (taskId: string, newStatus: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED') => {
     try {
       const token = await AsyncStorage.getItem('authToken');
       
@@ -130,26 +144,28 @@ export default function HomeScreen({ route, navigation }: any) {
         return;
       }
 
+      const completedAt = newStatus === 'COMPLETED' ? new Date().toISOString() : null;
+
       const response = await fetch(`${API_BASE_URL}/api/tasks/${taskId}`, {
         method: 'PATCH',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ status: newStatus }),
+        body: JSON.stringify({ status: newStatus, completedAt }),
       });
 
       if (response.ok) {
         // Update local state
         setTasks(prevTasks =>
           prevTasks.map(task =>
-            task.id === taskId ? { ...task, status: newStatus } : task
+            task.id === taskId ? { ...task, status: newStatus, completedAt: completedAt || undefined } : task
           )
         );
         
         Alert.alert(
           'Success',
-          `Task ${newStatus === 'COMPLETED' ? 'completed' : 'reactivated'} successfully!`
+          `Task ${newStatus === 'COMPLETED' ? 'completed' : 'updated'} successfully!`
         );
       } else {
         const errorData = await response.json();
@@ -205,7 +221,7 @@ export default function HomeScreen({ route, navigation }: any) {
   };
 
   const filteredTasks = tasks.filter((t) =>
-    tab === 'ACTIVE' ? t.status === 'ACTIVE' : t.status === 'COMPLETED'
+    tab === 'TODO' ? t.status === 'TODO' : t.status === 'COMPLETED'
   );
 
   const getInitials = () => {
@@ -273,15 +289,15 @@ export default function HomeScreen({ route, navigation }: any) {
         <View style={styles.tabsSection}>
           <View style={styles.tabsContainer}>
             <TouchableOpacity
-              style={[styles.tab, tab === 'ACTIVE' && styles.tabActive]}
-              onPress={() => setTab('ACTIVE')}
+              style={[styles.tab, tab === 'TODO' && styles.tabActive]}
+              onPress={() => setTab('TODO')}
               activeOpacity={0.7}
             >
-              <Text style={[styles.tabText, tab === 'ACTIVE' && styles.tabTextActive]}>
+              <Text style={[styles.tabText, tab === 'TODO' && styles.tabTextActive]}>
                 Active
               </Text>
-              <Text style={[styles.tabCount, tab === 'ACTIVE' && styles.tabCountActive]}>
-                {tasks.filter(t => t.status === 'ACTIVE').length}
+              <Text style={[styles.tabCount, tab === 'TODO' && styles.tabCountActive]}>
+                {tasks.filter(t => t.status === 'TODO' || t.status === 'IN_PROGRESS').length}
               </Text>
             </TouchableOpacity>
             
@@ -304,15 +320,15 @@ export default function HomeScreen({ route, navigation }: any) {
         {filteredTasks.length === 0 ? (
           <View style={styles.emptyState}>
             <MaterialIcons 
-              name={tab === 'ACTIVE' ? "assignment" : "check-circle"} 
+              name={tab === 'TODO' ? "assignment" : "check-circle"} 
               size={56} 
               color="#D1D5DB" 
             />
             <Text style={styles.emptyText}>
-              {tab === 'ACTIVE' ? 'No active tasks yet' : 'No completed tasks yet'}
+              {tab === 'TODO' ? 'No active tasks yet' : 'No completed tasks yet'}
             </Text>
             <Text style={styles.emptySubtext}>
-              {tab === 'ACTIVE' 
+              {tab === 'TODO' 
                 ? 'Create your first task to get started' 
                 : 'Complete some tasks to see them here'}
             </Text>
