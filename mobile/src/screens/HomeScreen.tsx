@@ -8,7 +8,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import SwipeableTaskCard from '../components/SwipeableTaskCard';
 
 // Update the API base URL to match your current IP
-const API_BASE_URL = 'http://100.100.66.165:3000';
+const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
 
 type Task = {
   id: string;

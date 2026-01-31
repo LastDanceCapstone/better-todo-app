@@ -14,7 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const API_BASE_URL = 'http://100.100.66.165:3000';
+const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
 
 type Subtask = {
   id: string;

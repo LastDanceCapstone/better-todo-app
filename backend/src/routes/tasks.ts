@@ -132,7 +132,6 @@ router.post('/tasks', authenticateToken, async (req: any, res) => {
         title,
         description,
         priority: priority || 'MEDIUM',
-        status: status || 'TODO',
         dueAt: dueAt ? new Date(dueAt) : null,
         userId,
       },
@@ -381,7 +380,6 @@ router.post('/tasks/:id/subtasks', authenticateToken, async (req: any, res) => {
       data: {
         title,
         description,
-        status: status || 'TODO',
         taskId: id,
       },
     });

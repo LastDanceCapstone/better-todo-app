@@ -45,8 +45,16 @@ app.use('/api', taskRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
+  res.json({
+    status: 'ok',
+    message: 'Prioritize API is running',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
     message: 'Prioritize API is running',
     timestamp: new Date().toISOString(),
   });

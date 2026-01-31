@@ -17,7 +17,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
 // Update the API base URL to match your current IP
-const API_BASE_URL = 'http://100.100.66.131:3000';
+const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
 
 type Priority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
 type Status = 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
