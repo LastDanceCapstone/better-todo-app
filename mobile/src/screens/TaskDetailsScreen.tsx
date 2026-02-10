@@ -13,8 +13,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-
-const API_BASE_URL = 'XXXXXXXXXXX';
+// this is my personal ip address for my computer.  i will need to change this 
+const API_BASE_URL = 'http://100.100.209.29:3000';
 
 type Subtask = {
   id: string;

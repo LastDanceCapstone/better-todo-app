@@ -6,7 +6,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Update the API base URL to match your current IP
-const API_BASE_URL = 'XXXXXXXXXXX';
+const API_BASE_URL = 'http://100.100.209.29:3000';
 
 type Task = {
   id: string;
