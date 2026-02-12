@@ -114,11 +114,15 @@ export default function LoginScreen({ navigation }: any) {
           [
             {
               text: 'OK',
-              onPress: () => navigation.replace('Home', { 
-                email: formData.email,
-                token: data.token,
-                user: data.user 
-              })
+              onPress: () =>
+                navigation.replace('Main', {
+                  screen: 'Home',
+                  params: {
+                    email: formData.email,
+                    token: data.token,
+                    user: data.user,
+                  },
+                })
             }
           ]
         );

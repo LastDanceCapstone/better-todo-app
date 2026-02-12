@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -10,11 +10,15 @@ import {
   Alert,
   ActivityIndicator,
   Platform,
+  Modal,
+  Pressable,
+  Animated,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useTheme } from '../theme';
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 
 // Update the API base URL to match your current IP
 const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
@@ -27,6 +31,13 @@ interface SubtaskInput {
   title: string;
   description?: string;
 }
+
+const STATUS_META: Record<Status, { label: string; icon: keyof typeof MaterialIcons.glyphMap; helper?: string }> = {
+  TODO: { label: 'To Do', icon: 'radio-button-unchecked', helper: 'Not started yet' },
+  IN_PROGRESS: { label: 'In Progress', icon: 'pending', helper: 'Currently being worked on' },
+  COMPLETED: { label: 'Completed', icon: 'check-circle', helper: 'All done' },
+  CANCELLED: { label: 'Cancelled', icon: 'cancel', helper: 'No longer needed' },
+};
 
 // Convert user input into ISO date string for backend
 const normalizeDate = (input: string): string | undefined => {
@@ -58,15 +69,11 @@ const normalizeDate = (input: string): string | undefined => {
   return undefined;
 };
 
-// Format date as MM-DD-YYYY for display
-const formatDateForDisplay = (date: Date): string => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${month}-${day}-${year}`;
-};
+const formatDateForDisplayLong = (date: Date): string =>
+  date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
 export default function CreateTaskScreen({ navigation }: any) {
+  const { colors } = useTheme();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState<Priority>('MEDIUM');
@@ -80,29 +87,84 @@ export default function CreateTaskScreen({ navigation }: any) {
   const [activeNav, setActiveNav] = useState('Create');
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [selectedDate, setSelectedDate] = useState(new Date());
-  const [showPriorityPicker, setShowPriorityPicker] = useState(false);
   const [showStatusPicker, setShowStatusPicker] = useState(false);
+  const modalOpacity = useRef(new Animated.Value(0)).current;
+  const modalTranslateY = useRef(new Animated.Value(40)).current;
 
   const onDateChange = (event: any, date?: Date) => {
-    // Close picker on Android after selection or cancel
+    if (event.type === 'set' && date) {
+      setSelectedDate(date);
+      setDueDate(date.toISOString());
+    }
+
     if (Platform.OS === 'android') {
       setShowDatePicker(false);
     }
-    
-    // Only update date if user selected one (not cancelled)
-    if (event.type === 'set' && date) {
-      setSelectedDate(date);
-      const formattedDate = formatDateForDisplay(date);
-      setDueDate(formattedDate);
-      
-      // Close picker on iOS after selection
-      if (Platform.OS === 'ios') {
-        setShowDatePicker(false);
+  };
+
+  const openDatePicker = () => {
+    if (dueDate) {
+      const parsed = new Date(dueDate);
+      if (!isNaN(parsed.getTime())) {
+        setSelectedDate(parsed);
       }
-    } else if (event.type === 'dismissed') {
-      // User cancelled, just close picker
-      setShowDatePicker(false);
+    } else {
+      setSelectedDate(new Date());
     }
+
+    if (Platform.OS === 'android') {
+      DateTimePickerAndroid.open({
+        value: dueDate ? new Date(dueDate) : new Date(),
+        mode: 'date',
+        display: 'calendar',
+        onChange: onDateChange,
+        minimumDate: new Date(),
+      });
+      return;
+    }
+
+    setShowDatePicker(true);
+
+    if (Platform.OS === 'ios') {
+      modalOpacity.setValue(0);
+      modalTranslateY.setValue(40);
+      requestAnimationFrame(() => {
+        Animated.parallel([
+          Animated.timing(modalOpacity, { toValue: 1, duration: 220, useNativeDriver: true }),
+          Animated.timing(modalTranslateY, { toValue: 0, duration: 220, useNativeDriver: true }),
+        ]).start();
+      });
+    }
+  };
+
+  const closeDatePicker = () => {
+    if (Platform.OS === 'ios') {
+      Animated.parallel([
+        Animated.timing(modalOpacity, { toValue: 0, duration: 180, useNativeDriver: true }),
+        Animated.timing(modalTranslateY, { toValue: 40, duration: 180, useNativeDriver: true }),
+      ]).start(() => setShowDatePicker(false));
+      return;
+    }
+
+    setShowDatePicker(false);
+  };
+
+  const handleClearDate = () => {
+    setDueDate('');
+    setSelectedDate(new Date());
+  };
+
+  const handleToday = () => {
+    const today = new Date();
+    setSelectedDate(today);
+    setDueDate(today.toISOString());
+  };
+
+  const handleTomorrow = () => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    setSelectedDate(tomorrow);
+    setDueDate(tomorrow.toISOString());
   };
 
   // Add new subtask input with unique ID
@@ -177,7 +239,7 @@ export default function CreateTaskScreen({ navigation }: any) {
         return;
       }
 
-      const normalizedDueDate = normalizeDate(dueDate);
+      const normalizedDueDate = dueDate ? normalizeDate(dueDate) : undefined;
 
       // Prepare task data for backend
       const taskData = {
@@ -286,11 +348,11 @@ export default function CreateTaskScreen({ navigation }: any) {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header - Card-like with soft background, subtle shadow */}
-      <View style={styles.headerContainer}>
-        <Text style={styles.headerTitle}>Create Task</Text>
-        <Text style={styles.headerSubtitle}>
+      <View style={[styles.headerContainer, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Create Task</Text>
+        <Text style={[styles.headerSubtitle, { color: colors.mutedText }]}>
           Add a new task, set priority, status, and due date.
         </Text>
       </View>
@@ -302,11 +364,11 @@ export default function CreateTaskScreen({ navigation }: any) {
       >
         {/* Title Field */}
         <View style={styles.field}>
-          <Text style={styles.label}>Task Title</Text>
+          <Text style={[styles.label, { color: colors.text }]}>Task Title</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text }]}
             placeholder="e.g., Complete Math Homework"
-            placeholderTextColor="#9CA3AF"
+            placeholderTextColor={colors.mutedText}
             value={title}
             onChangeText={setTitle}
             editable={!isSubmitting}
@@ -315,12 +377,12 @@ export default function CreateTaskScreen({ navigation }: any) {
 
         {/* Description Field */}
         <View style={styles.field}>
-          <Text style={styles.label}>Description</Text>
-          <Text style={styles.helperText}>Optional</Text>
+          <Text style={[styles.label, { color: colors.text }]}>Description</Text>
+          <Text style={[styles.helperText, { color: colors.mutedText }]}>Optional</Text>
           <TextInput
-            style={[styles.input, styles.textArea]}
+            style={[styles.input, styles.textArea, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text }]}
             placeholder="Add more details about this task"
-            placeholderTextColor="#9CA3AF"
+            placeholderTextColor={colors.mutedText}
             value={description}
             onChangeText={setDescription}
             multiline
@@ -330,173 +392,196 @@ export default function CreateTaskScreen({ navigation }: any) {
 
         {/* Due Date Field */}
         <View style={styles.field}>
-          <Text style={styles.label}>Due Date</Text>
-          <View style={styles.dateInputContainer}>
-            <TextInput
-              style={[styles.input, styles.dateInput]}
-              placeholder="MM-DD-YYYY or 12-31-2024"
-              placeholderTextColor="#9CA3AF"
-              value={dueDate}
-              onChangeText={setDueDate}
-              editable={!isSubmitting}
-            />
-            <TouchableOpacity 
-              style={styles.calendarButton}
-              onPress={() => setShowDatePicker(!showDatePicker)}
-              disabled={isSubmitting}
-              activeOpacity={0.7}
+          <Text style={[styles.label, { color: colors.text }]}>Due Date</Text>
+          <TouchableOpacity
+            style={[styles.dateFieldButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+            onPress={openDatePicker}
+            disabled={isSubmitting}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={dueDate ? `Due date: ${formatDateForDisplayLong(new Date(dueDate))}` : 'Select due date'}
+          >
+            <Text
+              style={[
+                styles.dateFieldText,
+                { color: dueDate ? colors.text : colors.mutedText },
+              ]}
             >
-              <MaterialIcons 
-                name={showDatePicker ? "close" : "calendar-today"} 
-                size={22} 
-                color={showDatePicker ? "#FF4D4D" : "#6B7280"} 
-              />
+              {dueDate ? formatDateForDisplayLong(new Date(dueDate)) : 'Select a date'}
+            </Text>
+            <MaterialIcons name="calendar-today" size={20} color={colors.mutedText} />
+          </TouchableOpacity>
+          <Text style={[styles.helperText, { color: colors.mutedText }]}>Optional - tap to select</Text>
+          <View style={styles.dateQuickActions}>
+            <TouchableOpacity
+              onPress={handleToday}
+              style={[styles.dateQuickActionButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+            >
+              <Text style={[styles.dateQuickActionText, { color: colors.text }]}>Today</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleTomorrow}
+              style={[styles.dateQuickActionButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+            >
+              <Text style={[styles.dateQuickActionText, { color: colors.text }]}>Tomorrow</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleClearDate}
+              style={[styles.dateQuickActionButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+            >
+              <Text style={[styles.dateQuickActionText, { color: colors.danger }]}>Clear</Text>
             </TouchableOpacity>
           </View>
-          <Text style={styles.helperText}>
-            Example: 12-31-2024, or click calendar to select
-          </Text>
         </View>
 
-        {/* Date Picker - Native Component */}
-        {showDatePicker && (
-          <>
-            {Platform.OS === 'ios' && (
-              <View style={styles.iosDatePickerContainer}>
-                <View style={styles.iosDatePickerHeader}>
-                  <TouchableOpacity onPress={() => setShowDatePicker(false)}>
-                    <Text style={styles.iosDatePickerButton}>Cancel</Text>
+        {/* Date Picker */}
+        {Platform.OS === 'ios' && showDatePicker && (
+          <Modal transparent animationType="none" visible onRequestClose={closeDatePicker}>
+            <View style={styles.modalRoot}>
+              <Pressable onPress={closeDatePicker} style={styles.modalBackdropPressable}>
+                <Animated.View style={[styles.modalBackdrop, { opacity: modalOpacity }]} />
+              </Pressable>
+              <Animated.View
+                style={[
+                  styles.dateSheet,
+                  { backgroundColor: colors.surface, borderTopColor: colors.border },
+                  { opacity: modalOpacity, transform: [{ translateY: modalTranslateY }] },
+                ]}
+              >
+                <View style={[styles.sheetHeader, { borderBottomColor: colors.border }]}> 
+                  <TouchableOpacity onPress={handleClearDate}>
+                    <Text style={[styles.sheetActionText, { color: colors.danger }]}>Clear</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity onPress={() => {
-                    const formattedDate = formatDateForDisplay(selectedDate);
-                    setDueDate(formattedDate);
-                    setShowDatePicker(false);
-                  }}>
-                    <Text style={[styles.iosDatePickerButton, styles.iosDatePickerDone]}>Done</Text>
+                  <TouchableOpacity onPress={handleToday}>
+                    <Text style={[styles.sheetActionText, { color: colors.primary }]}>Today</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={closeDatePicker}>
+                    <Text style={[styles.sheetActionText, { color: colors.primary }]}>Done</Text>
                   </TouchableOpacity>
                 </View>
-                <DateTimePicker
-                  value={selectedDate}
-                  mode="date"
-                  display="inline"
-                  onChange={(event, date) => {
-                    if (date) setSelectedDate(date);
-                  }}
-                  minimumDate={new Date()}
-                />
-              </View>
-            )}
-            
-            {Platform.OS === 'android' && (
-              <DateTimePicker
-                value={selectedDate}
-                mode="date"
-                display="calendar"
-                onChange={onDateChange}
-                minimumDate={new Date()}
-              />
-            )}
-          </>
+                <View style={styles.datePickerContainer}>
+                  <DateTimePicker
+                    value={selectedDate}
+                    mode="date"
+                    display="spinner"
+                    onChange={onDateChange}
+                    minimumDate={new Date()}
+                    textColor={colors.text}
+                    style={styles.datePicker}
+                  />
+                </View>
+              </Animated.View>
+            </View>
+          </Modal>
         )}
 
         {/* Priority Field */}
         <View style={styles.field}>
-          <Text style={styles.label}>Priority</Text>
-          <TouchableOpacity 
-            style={styles.dropdownButton}
-            onPress={() => setShowPriorityPicker(!showPriorityPicker)}
-            disabled={isSubmitting}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.dropdownText}>
-              {priority.charAt(0) + priority.slice(1).toLowerCase()}
-            </Text>
-            <MaterialIcons 
-              name={showPriorityPicker ? "arrow-drop-up" : "arrow-drop-down"} 
-              size={24} 
-              color="#6B7280" 
-            />
-          </TouchableOpacity>
-          
-          {/* Priority Dropdown Options */}
-          {showPriorityPicker && (
-            <View style={styles.dropdownMenu}>
-              {(['LOW', 'MEDIUM', 'HIGH'] as Priority[]).map((level) => (
+          <Text style={[styles.label, { color: colors.text }]}>Priority</Text>
+          <View style={styles.chipRow}>
+            {(['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as Priority[]).map((level) => {
+              const isSelected = priority === level;
+              return (
                 <TouchableOpacity
                   key={level}
                   style={[
-                    styles.dropdownOption,
-                    priority === level && styles.dropdownOptionActive,
+                    styles.chip,
+                    isSelected
+                      ? { backgroundColor: colors.primary, borderColor: colors.primary }
+                      : { backgroundColor: colors.surface, borderColor: colors.border },
                   ]}
-                  onPress={() => {
-                    setPriority(level);
-                    setShowPriorityPicker(false);
-                  }}
-                  activeOpacity={0.7}
+                  onPress={() => setPriority(level)}
+                  disabled={isSubmitting}
+                  activeOpacity={0.8}
                 >
                   <Text
                     style={[
-                      styles.dropdownOptionText,
-                      priority === level && styles.dropdownOptionTextActive,
+                      styles.chipText,
+                      { color: isSelected ? colors.surface : colors.text },
                     ]}
                   >
                     {level.charAt(0) + level.slice(1).toLowerCase()}
                   </Text>
-                  {priority === level && (
-                    <MaterialIcons name="check" size={20} color="#2563EB" />
-                  )}
                 </TouchableOpacity>
-              ))}
-            </View>
-          )}
+              );
+            })}
+          </View>
         </View>
 
         {/* Status Field */}
         <View style={styles.field}>
-          <Text style={styles.label}>Status</Text>
+          <Text style={[styles.label, { color: colors.text }]}>Status</Text>
           <TouchableOpacity 
-            style={styles.dropdownButton}
+            style={[styles.dropdownButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
             onPress={() => setShowStatusPicker(!showStatusPicker)}
             disabled={isSubmitting}
             activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={`Status: ${STATUS_META[status].label}`}
           >
-            <Text style={styles.dropdownText}>
-              {status.charAt(0) + status.slice(1).toLowerCase()}
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <MaterialIcons name={STATUS_META[status].icon} size={20} color={colors.mutedText} />
+              <Text style={[styles.dropdownText, { color: colors.text }]}>
+                {STATUS_META[status].label}
+              </Text>
+            </View>
             <MaterialIcons 
               name={showStatusPicker ? "arrow-drop-up" : "arrow-drop-down"} 
               size={24} 
-              color="#6B7280" 
+              color={colors.mutedText}
             />
           </TouchableOpacity>
           
           {/* Status Dropdown Options */}
           {showStatusPicker && (
-            <View style={styles.dropdownMenu}>
-              {(['TODO', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'] as Status[]).map((statusOption) => (
+            <View style={[styles.dropdownMenu, styles.statusMenu, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
+              {(Object.keys(STATUS_META) as Status[]).map((statusOption) => (
                 <TouchableOpacity
                   key={statusOption}
                   style={[
                     styles.dropdownOption,
-                    status === statusOption && styles.dropdownOptionActive,
+                    status === statusOption && [styles.dropdownOptionActive, { backgroundColor: colors.primary + '15' }],
+                    { borderBottomColor: colors.border, borderBottomWidth: StyleSheet.hairlineWidth },
                   ]}
                   onPress={() => {
                     setStatus(statusOption);
                     setShowStatusPicker(false);
                   }}
                   activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel={STATUS_META[statusOption].label}
                 >
-                  <Text
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <MaterialIcons
+                      name={STATUS_META[statusOption].icon}
+                      size={20}
+                      color={status === statusOption ? colors.primary : colors.mutedText}
+                    />
+                    <View style={{ flex: 1 }}>
+                      <Text
+                        style={[
+                          styles.dropdownOptionText,
+                          status === statusOption && [styles.dropdownOptionTextActive, { color: colors.primary }],
+                          { color: status === statusOption ? colors.primary : colors.text },
+                        ]}
+                      >
+                        {STATUS_META[statusOption].label}
+                      </Text>
+                      {STATUS_META[statusOption].helper ? (
+                        <Text style={[styles.helperText, { color: colors.mutedText, marginTop: 2 }]}> 
+                          {STATUS_META[statusOption].helper}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </View>
+                  <View
                     style={[
-                      styles.dropdownOptionText,
-                      status === statusOption && styles.dropdownOptionTextActive,
+                      styles.dropdownCheckWrap,
+                      { opacity: status === statusOption ? 1 : 0 },
                     ]}
                   >
-                    {statusOption.charAt(0) + statusOption.slice(1).toLowerCase()}
-                  </Text>
-                  {status === statusOption && (
-                    <MaterialIcons name="check" size={20} color="#2563EB" />
-                  )}
+                    <MaterialIcons name="check" size={20} color={colors.primary} />
+                  </View>
                 </TouchableOpacity>
               ))}
             </View>
@@ -504,10 +589,10 @@ export default function CreateTaskScreen({ navigation }: any) {
         </View>
 
         {/* Subtasks Toggle */}
-        <View style={styles.fieldRow}>
+        <View style={[styles.fieldRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <View style={styles.fieldRowLeft}>
-            <Text style={styles.label}>Enable Subtasks</Text>
-            <Text style={styles.helperText}>
+            <Text style={[styles.label, { color: colors.text }]}>Enable Subtasks</Text>
+            <Text style={[styles.helperText, { color: colors.mutedText }]}>
               Break down this task into smaller steps.
             </Text>
           </View>
@@ -515,39 +600,52 @@ export default function CreateTaskScreen({ navigation }: any) {
             value={hasSubtasks} 
             onValueChange={toggleSubtasks}
             disabled={isSubmitting}
-            trackColor={{ false: '#D1D5DB', true: '#93C5FD' }}
-            thumbColor={hasSubtasks ? '#2563EB' : '#F3F4F6'}
-            ios_backgroundColor="#D1D5DB"
+            trackColor={{ false: colors.border, true: colors.primary + '50' }}
+            thumbColor={hasSubtasks ? colors.primary : colors.card}
+            ios_backgroundColor={colors.border}
           />
         </View>
 
         {/* Subtasks Section */}
         {hasSubtasks && (
-          <View style={styles.subtasksSection}>
-            <Text style={styles.subtasksSectionTitle}>Subtasks</Text>
+          <View style={[styles.subtasksSection, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={styles.subtasksHeaderRow}>
+              <Text style={[styles.subtasksSectionTitle, { color: colors.text }]}>Subtasks</Text>
+              <Text style={[styles.subtasksCount, { color: colors.mutedText }]}>{subtaskInputs.length}</Text>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.addSubtaskButton, { borderColor: colors.primary, backgroundColor: colors.primary + '10' }]}
+              onPress={addSubtaskInput}
+              disabled={isSubmitting}
+              activeOpacity={0.7}
+            >
+              <MaterialIcons name="add-circle-outline" size={20} color={colors.primary} />
+              <Text style={[styles.addSubtaskText, { color: colors.primary }]}>Add Another Subtask</Text>
+            </TouchableOpacity>
             
             {subtaskInputs.map((subtask, index) => (
-              <View key={subtask.id} style={styles.subtaskCard}>
+              <View key={subtask.id} style={[styles.subtaskCard, { backgroundColor: colors.card, borderColor: colors.border }]}> 
                 {/* Subtask Header */}
                 <View style={styles.subtaskHeader}>
-                  <Text style={styles.subtaskLabel}>Subtask {index + 1}</Text>
+                  <Text style={[styles.subtaskLabel, { color: colors.mutedText }]}>Subtask {index + 1}</Text>
                   {subtaskInputs.length > 1 && (
                     <TouchableOpacity
-                      style={styles.removeSubtaskButton}
+                      style={[styles.removeSubtaskButton, { backgroundColor: colors.danger + '15' }]}
                       onPress={() => removeSubtaskInput(subtask.id)}
                       disabled={isSubmitting}
                       activeOpacity={0.7}
                     >
-                      <MaterialIcons name="close" size={20} color="#FF4D4D" />
+                      <MaterialIcons name="close" size={20} color={colors.danger} />
                     </TouchableOpacity>
                   )}
                 </View>
 
                 {/* Subtask Title Input */}
                 <TextInput
-                  style={styles.subtaskInput}
+                  style={[styles.subtaskInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.text }]}
                   placeholder="Subtask title"
-                  placeholderTextColor="#9CA3AF"
+                  placeholderTextColor={colors.mutedText}
                   value={subtask.title}
                   onChangeText={(text) => updateSubtaskTitle(subtask.id, text)}
                   editable={!isSubmitting}
@@ -555,9 +653,9 @@ export default function CreateTaskScreen({ navigation }: any) {
 
                 {/* Subtask Description Input (Optional) */}
                 <TextInput
-                  style={[styles.subtaskInput, styles.subtaskDescriptionInput]}
+                  style={[styles.subtaskInput, styles.subtaskDescriptionInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.text }]}
                   placeholder="Description (optional)"
-                  placeholderTextColor="#9CA3AF"
+                  placeholderTextColor={colors.mutedText}
                   value={subtask.description}
                   onChangeText={(text) => updateSubtaskDescription(subtask.id, text)}
                   editable={!isSubmitting}
@@ -569,39 +667,41 @@ export default function CreateTaskScreen({ navigation }: any) {
 
             {/* Add Another Subtask Button */}
             <TouchableOpacity
-              style={styles.addSubtaskButton}
+              style={[styles.addSubtaskButton, { borderColor: colors.primary, backgroundColor: colors.primary + '10' }]}
               onPress={addSubtaskInput}
               disabled={isSubmitting}
               activeOpacity={0.7}
             >
-              <MaterialIcons name="add-circle-outline" size={20} color="#2563EB" />
-              <Text style={styles.addSubtaskText}>Add Another Subtask</Text>
+              <MaterialIcons name="add-circle-outline" size={20} color={colors.primary} />
+              <Text style={[styles.addSubtaskText, { color: colors.primary }]}>Add Another Subtask</Text>
             </TouchableOpacity>
           </View>
         )}
 
         {/* Create Task Button */}
-        <TouchableOpacity 
-          style={[styles.createButton, isSubmitting && styles.createButtonDisabled]} 
-          onPress={handleSave}
-          disabled={isSubmitting}
-          activeOpacity={0.7}
-        >
-          {isSubmitting ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <>
-              <MaterialIcons name="add-task" size={20} color="#FFFFFF" />
-              <Text style={styles.createButtonText}>Create Task</Text>
-            </>
-          )}
-        </TouchableOpacity>
+        <View style={[styles.ctaContainer, { borderTopColor: colors.border }]}> 
+          <TouchableOpacity 
+            style={[styles.createButton, { backgroundColor: colors.primary }, isSubmitting && styles.createButtonDisabled]} 
+            onPress={handleSave}
+            disabled={isSubmitting}
+            activeOpacity={0.7}
+          >
+            {isSubmitting ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <>
+                <MaterialIcons name="add-task" size={20} color="#FFFFFF" />
+                <Text style={styles.createButtonText}>Create Task</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
 
-        <View style={{ height: 100 }} />
+        <View style={{ height: 120 }} />
       </ScrollView>
 
       {/* Bottom Navigation - Matches HomeScreen style */}
-      <View style={styles.bottomNav}>
+      <View style={[styles.bottomNav, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
         <TouchableOpacity
           style={styles.navItem}
           onPress={() => {
@@ -613,12 +713,13 @@ export default function CreateTaskScreen({ navigation }: any) {
           <MaterialIcons
             name="home"
             size={26}
-            color={activeNav === 'Home' ? '#2563EB' : '#6B7280'}
+            color={activeNav === 'Home' ? colors.primary : colors.mutedText}
           />
           <Text
             style={[
               styles.navText,
-              activeNav === 'Home' && styles.navTextActive,
+              activeNav === 'Home' && [styles.navTextActive, { color: colors.primary }],
+              { color: activeNav === 'Home' ? colors.primary : colors.mutedText },
             ]}
           >
             Home
@@ -633,12 +734,13 @@ export default function CreateTaskScreen({ navigation }: any) {
           <MaterialIcons
             name="add-circle"
             size={26}
-            color={activeNav === 'Create' ? '#2563EB' : '#6B7280'}
+            color={activeNav === 'Create' ? colors.primary : colors.mutedText}
           />
           <Text
             style={[
               styles.navText,
-              activeNav === 'Create' && styles.navTextActive,
+              activeNav === 'Create' && [styles.navTextActive, { color: colors.primary }],
+              { color: activeNav === 'Create' ? colors.primary : colors.mutedText },
             ]}
           >
             Create
@@ -656,12 +758,13 @@ export default function CreateTaskScreen({ navigation }: any) {
           <MaterialIcons
             name="calendar-today"
             size={26}
-            color={activeNav === 'Calendar' ? '#2563EB' : '#6B7280'}
+            color={activeNav === 'Calendar' ? colors.primary : colors.mutedText}
           />
           <Text
             style={[
               styles.navText,
-              activeNav === 'Calendar' && styles.navTextActive,
+              activeNav === 'Calendar' && [styles.navTextActive, { color: colors.primary }],
+              { color: activeNav === 'Calendar' ? colors.primary : colors.mutedText },
             ]}
           >
             Calendar
@@ -672,19 +775,20 @@ export default function CreateTaskScreen({ navigation }: any) {
           style={styles.navItem}
           onPress={() => {
             setActiveNav('Account');
-            navigation.navigate('AccountDetails');
+            navigation.navigate('Account');
           }}
           activeOpacity={0.7}
         >
           <MaterialIcons
             name="account-circle"
             size={26}
-            color={activeNav === 'Account' ? '#2563EB' : '#6B7280'}
+            color={activeNav === 'Account' ? colors.primary : colors.mutedText}
           />
           <Text
             style={[
               styles.navText,
-              activeNav === 'Account' && styles.navTextActive,
+              activeNav === 'Account' && [styles.navTextActive, { color: colors.primary }],
+              { color: activeNav === 'Account' ? colors.primary : colors.mutedText },
             ]}
           >
             Account
@@ -698,8 +802,7 @@ export default function CreateTaskScreen({ navigation }: any) {
 const styles = StyleSheet.create({
   // Container
   container: { 
-    flex: 1, 
-    backgroundColor: '#FFFFFF',
+    flex: 1,
   },
 
   // Header - Card-like with soft background, subtle shadow
@@ -707,22 +810,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 16,
     paddingBottom: 16,
-    backgroundColor: '#F9FAFB',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
     shadowRadius: 3,
     elevation: 2,
+    borderBottomWidth: 1,
+    overflow: 'hidden',
   },
   headerTitle: { 
     fontSize: 24, 
-    fontWeight: '700', 
-    color: '#111827',
+    fontWeight: '700',
     marginBottom: 4,
   },
   headerSubtitle: { 
-    fontSize: 14, 
-    color: '#6B7280',
+    fontSize: 14,
     lineHeight: 20,
   },
 
@@ -743,10 +845,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 12,
     paddingHorizontal: 16,
-    backgroundColor: '#F9FAFB',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
   },
   fieldRowLeft: {
     flex: 1,
@@ -755,83 +855,99 @@ const styles = StyleSheet.create({
   label: { 
     fontSize: 16,
     fontWeight: '700',
-    color: '#111827', 
     marginBottom: 8,
   },
   helperText: { 
-    fontSize: 13, 
-    color: '#6B7280',
+    fontSize: 13,
     marginTop: 6,
     lineHeight: 18,
   },
 
   // Inputs
   input: {
-    backgroundColor: '#FFFFFF',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
     paddingHorizontal: 16,
     paddingVertical: 14,
     fontSize: 15,
-    color: '#111827',
   },
   textArea: { 
     minHeight: 100, 
     textAlignVertical: 'top',
   },
 
-  // Date Input
-  dateInputContainer: {
-    position: 'relative',
+  // Due Date Field
+  dateFieldButton: {
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
-  dateInput: {
-    paddingRight: 50,
+  dateFieldText: {
+    fontSize: 15,
+    fontWeight: '500',
   },
-  calendarButton: {
-    position: 'absolute',
-    right: 14,
-    top: 14,
-    padding: 4,
+  dateQuickActions: {
+    marginTop: 8,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  dateQuickActionButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  dateQuickActionText: {
+    fontSize: 13,
+    fontWeight: '600',
   },
 
-  // iOS Date Picker
-  iosDatePickerContainer: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    marginBottom: 24,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+  // iOS Date Picker Modal
+  modalRoot: {
+    flex: 1,
+    justifyContent: 'flex-end',
   },
-  iosDatePickerHeader: {
+  modalBackdropPressable: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
+  },
+  dateSheet: {
+    borderTopWidth: 1,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingBottom: 16,
+    paddingTop: 8,
+  },
+  sheetHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-    backgroundColor: '#F9FAFB',
   },
-  iosDatePickerButton: {
-    fontSize: 16,
-    color: '#6B7280',
+  sheetActionText: {
+    fontSize: 15,
     fontWeight: '600',
   },
-  iosDatePickerDone: {
-    color: '#2563EB',
+  datePickerContainer: {
+    alignItems: 'center',
+    paddingTop: 8,
+  },
+  datePicker: {
+    width: '100%',
   },
 
   // Dropdown
   dropdownButton: {
-    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#E5E7EB',
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 14,
@@ -841,15 +957,12 @@ const styles = StyleSheet.create({
   },
   dropdownText: {
     fontSize: 15,
-    color: '#111827',
     fontWeight: '500',
   },
   dropdownMenu: {
     marginTop: 8,
-    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 12,
+    borderRadius: 16,
     overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -857,49 +970,76 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
+  statusMenu: {
+    borderRadius: 16,
+  },
   dropdownOption: {
     paddingVertical: 14,
     paddingHorizontal: 16,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    paddingRight: 36,
   },
   dropdownOptionActive: {
-    backgroundColor: '#EFF6FF',
   },
   dropdownOptionText: {
     fontSize: 15,
-    color: '#111827',
   },
   dropdownOptionTextActive: {
-    color: '#2563EB',
+    fontWeight: '600',
+  },
+  dropdownCheckWrap: {
+    marginLeft: 6,
+    marginRight: 6,
+    width: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Priority chips
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  chip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  chipText: {
+    fontSize: 13,
     fontWeight: '600',
   },
 
   // Subtasks Section
   subtasksSection: {
     marginBottom: 24,
-    backgroundColor: '#F9FAFB',
     borderRadius: 12,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+  },
+  subtasksHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
   },
   subtasksSectionTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#111827',
-    marginBottom: 16,
+  },
+  subtasksCount: {
+    fontSize: 12,
+    fontWeight: '600',
   },
   subtaskCard: {
-    backgroundColor: '#FFFFFF',
     borderRadius: 12,
     padding: 14,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
   },
   subtaskHeader: {
     flexDirection: 'row',
@@ -910,17 +1050,13 @@ const styles = StyleSheet.create({
   subtaskLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#6B7280',
   },
   subtaskInput: {
-    backgroundColor: '#F9FAFB',
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 15,
-    color: '#111827',
     marginBottom: 10,
   },
   subtaskDescriptionInput: {
@@ -932,7 +1068,6 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: 'rgba(255, 77, 77, 0.1)',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -944,24 +1079,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderRadius: 12,
     borderWidth: 1.5,
-    borderColor: '#2563EB',
     borderStyle: 'dashed',
-    backgroundColor: '#EFF6FF',
-    marginTop: 4,
+    marginBottom: 12,
   },
   addSubtaskText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#2563EB',
     marginLeft: 8,
   },
 
   // Create Button
+  ctaContainer: {
+    borderTopWidth: 1,
+    paddingTop: 12,
+    paddingBottom: 8,
+    marginTop: 8,
+  },
   createButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#2563EB',
     borderRadius: 12,
     paddingVertical: 16,
     marginTop: 8,
@@ -972,7 +1109,6 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   createButtonDisabled: {
-    backgroundColor: '#93C5FD',
     shadowOpacity: 0.1,
   },
   createButtonText: { 
@@ -989,7 +1125,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 72,
-    backgroundColor: '#FFFFFF',
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',
@@ -999,7 +1134,6 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 8,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(0, 0, 0, 0.04)',
   },
   navItem: { 
     alignItems: 'center',
@@ -1009,10 +1143,8 @@ const styles = StyleSheet.create({
   navText: { 
     fontSize: 11, 
     fontWeight: '600',
-    color: '#6B7280',
     marginTop: 4,
   },
   navTextActive: { 
-    color: '#2563EB',
   },
 });
