@@ -14,6 +14,8 @@ import HomeScreen from './src/screens/HomeScreen';
 import CreateTaskScreen from './src/screens/CreateTaskScreen';
 import TaskDetailsScreen from './src/screens/TaskDetailsScreen';
 import AccountDetailsScreen from './src/screens/AccountDetailsScreen';
+import ForgotPasswordScreen from './src/screens/ForgotPasswordScreen';
+import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
 
 const RootStack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -173,6 +175,8 @@ const AppNavigator = () => {
         <RootStack.Screen name="Login" component={LoginScreen} />
         <RootStack.Screen name="Main" component={TabNavigator} />
         <RootStack.Screen name="TaskDetails" component={TaskDetailsScreen} />
+        <RootStack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+        <RootStack.Screen name="ResetPassword" component={ResetPasswordScreen} />
       </RootStack.Navigator>
     </NavigationContainer>
   );
