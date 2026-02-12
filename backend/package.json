@@ -5,27 +5,43 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon src/index.ts",
+<<<<<<< HEAD
     "build": "npx prisma generate && tsc",
     "start": "node dist/index.js",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate deploy"
+=======
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate dev"
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
+<<<<<<< HEAD
     "@prisma/client": "^5.20.0",
+=======
+    "@prisma/client": "^6.18.0",
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
     "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "helmet": "^8.1.0",
+<<<<<<< HEAD
     "jsonwebtoken": "^9.0.2",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1"
+=======
+    "jsonwebtoken": "^9.0.2"
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",
@@ -34,10 +50,15 @@
     "@types/helmet": "^4.0.0",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^24.10.0",
+<<<<<<< HEAD
     "@types/swagger-jsdoc": "^6.0.4",
     "@types/swagger-ui-express": "^4.1.8",
     "nodemon": "^3.1.10",
     "prisma": "^5.20.0",
+=======
+    "nodemon": "^3.1.10",
+    "prisma": "^6.18.0",
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.9.3"

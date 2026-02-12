@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+<<<<<<< HEAD
 
     "target": "ES2020",
  
@@ -14,11 +15,31 @@
     "allowSyntheticDefaultImports": true,
 
   
+=======
+    // target modern JS but still fine for Node
+    "target": "ES2020",
+    // use classic Node-style modules
+    "module": "commonjs",
+    "moduleResolution": "node",
+    // compile from src → dist
+    "rootDir": "src",
+    "outDir": "dist",
+
+    // make `import express from 'express'` work
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+
+    // good defaults
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
     "strict": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
 
+<<<<<<< HEAD
     
+=======
+    // this was causing your error
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
     "verbatimModuleSyntax": false
   },
   "include": ["src"]

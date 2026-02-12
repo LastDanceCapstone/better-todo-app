@@ -1,10 +1,14 @@
 // src/routes/tasks.ts
 import { Router } from 'express';
+<<<<<<< HEAD
 import jwt from 'jsonwebtoken';
+=======
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
 import { prisma } from '../prisma';
 
 const router = Router();
 
+<<<<<<< HEAD
 // Auth middleware
 const authenticateToken = (req: any, res: any, next: any) => {
   const authHeader = req.headers['authorization'];
@@ -51,6 +55,10 @@ const authenticateToken = (req: any, res: any, next: any) => {
  *               $ref: '#/components/schemas/Error'
  */
 router.get('/tasks', authenticateToken, async (req: any, res) => {
+=======
+// GET /api/tasks
+router.get('/tasks', async (req: any, res) => {
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
   try {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
@@ -68,6 +76,7 @@ router.get('/tasks', authenticateToken, async (req: any, res) => {
   }
 });
 
+<<<<<<< HEAD
 /**
  * @swagger
  * /tasks:
@@ -121,21 +130,35 @@ router.get('/tasks', authenticateToken, async (req: any, res) => {
  *               $ref: '#/components/schemas/Error'
  */
 router.post('/tasks', authenticateToken, async (req: any, res) => {
+=======
+// POST /api/tasks
+router.post('/tasks', async (req: any, res) => {
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
   try {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
+<<<<<<< HEAD
     const { title, description, priority, status, dueAt } = req.body;
+=======
+    const { title, description, priority, dueDate } = req.body;
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
 
     const task = await prisma.task.create({
       data: {
         title,
         description,
         priority: priority || 'MEDIUM',
+<<<<<<< HEAD
         dueAt: dueAt ? new Date(dueAt) : null,
         userId,
       },
       include: { subtasks: true },
+=======
+        dueDate: dueDate ? new Date(dueDate) : null,
+        userId,
+      },
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
     });
 
     return res.status(201).json({ task });
@@ -145,6 +168,7 @@ router.post('/tasks', authenticateToken, async (req: any, res) => {
   }
 });
 
+<<<<<<< HEAD
 /**
  * @swagger
  * /tasks/{id}:
@@ -545,4 +569,6 @@ router.delete('/subtasks/:id', authenticateToken, async (req: any, res) => {
   }
 });
 
+=======
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
 export default router;

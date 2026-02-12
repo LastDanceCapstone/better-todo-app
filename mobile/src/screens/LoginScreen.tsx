@@ -2,7 +2,10 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
+<<<<<<< HEAD
   TextInput,
+=======
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
   TouchableOpacity,
   StyleSheet,
   KeyboardAvoidingView,
@@ -12,10 +15,14 @@ import {
   Alert
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
+<<<<<<< HEAD
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 
 const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
+=======
+import CustomTextInput from '../../components/CustomTextInput';
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
 
 export default function LoginScreen({ navigation }: any) {
   const [isLogin, setIsLogin] = useState(true);
@@ -34,8 +41,12 @@ export default function LoginScreen({ navigation }: any) {
     return re.test(email);
   };
 
+<<<<<<< HEAD
   const handleSubmit = async () => {
     // Validation
+=======
+  const handleSubmit = () => {
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
     if (!formData.email || !validateEmail(formData.email)) {
       Alert.alert('Error', 'Please enter a valid email');
       return;
@@ -59,6 +70,7 @@ export default function LoginScreen({ navigation }: any) {
 
     setIsSubmitting(true);
 
+<<<<<<< HEAD
     try {
       const endpoint = isLogin ? '/api/login' : '/api/register';
       const payload = isLogin 
@@ -151,6 +163,21 @@ export default function LoginScreen({ navigation }: any) {
     } finally {
       setIsSubmitting(false);
     }
+=======
+    setTimeout(() => {
+      setIsSubmitting(false);
+      Alert.alert(
+        'Success',
+        isLogin ? 'Login successful!' : 'Registration successful!',
+        [
+          {
+            text: 'OK',
+            onPress: () => navigation.replace('Home', { email: formData.email })
+          }
+        ]
+      );
+    }, 1500);
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
   };
 
   return (
@@ -177,8 +204,13 @@ export default function LoginScreen({ navigation }: any) {
             {isLogin ? 'Welcome Back' : 'Create Account'}
           </Text>
           <Text style={styles.cardSubtitle}>
+<<<<<<< HEAD
             {isLogin 
               ? 'Sign in to continue to your dashboard' 
+=======
+            {isLogin
+              ? 'Sign in to continue to your dashboard'
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
               : 'Start organizing your tasks today'}
           </Text>
 
@@ -187,21 +219,39 @@ export default function LoginScreen({ navigation }: any) {
             <View style={styles.nameRow}>
               <View style={styles.nameInput}>
                 <Text style={styles.label}>First Name</Text>
+<<<<<<< HEAD
                 <TextInput
                   style={styles.input}
                   placeholder="John"
                   value={formData.firstName}
                   onChangeText={(text) => setFormData({...formData, firstName: text})}
+=======
+                <CustomTextInput
+                  placeholder="John"
+                  value={formData.firstName}
+                  onChangeText={(text) =>
+                    setFormData({ ...formData, firstName: text })
+                  }
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
                   autoCapitalize="words"
                 />
               </View>
               <View style={styles.nameInput}>
                 <Text style={styles.label}>Last Name</Text>
+<<<<<<< HEAD
                 <TextInput
                   style={styles.input}
                   placeholder="Doe"
                   value={formData.lastName}
                   onChangeText={(text) => setFormData({...formData, lastName: text})}
+=======
+                <CustomTextInput
+                  placeholder="Doe"
+                  value={formData.lastName}
+                  onChangeText={(text) =>
+                    setFormData({ ...formData, lastName: text })
+                  }
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
                   autoCapitalize="words"
                 />
               </View>
@@ -211,11 +261,20 @@ export default function LoginScreen({ navigation }: any) {
           {/* Email */}
           <View style={styles.formGroup}>
             <Text style={styles.label}>Email</Text>
+<<<<<<< HEAD
             <TextInput
               style={styles.input}
               placeholder="you@example.com"
               value={formData.email}
               onChangeText={(text) => setFormData({...formData, email: text})}
+=======
+            <CustomTextInput
+              placeholder="you@example.com"
+              value={formData.email}
+              onChangeText={(text) =>
+                setFormData({ ...formData, email: text })
+              }
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
@@ -225,6 +284,7 @@ export default function LoginScreen({ navigation }: any) {
           {/* Password */}
           <View style={styles.formGroup}>
             <Text style={styles.label}>Password</Text>
+<<<<<<< HEAD
             <View style={styles.passwordContainer}>
               <TextInput
                 style={styles.passwordInput}
@@ -245,17 +305,49 @@ export default function LoginScreen({ navigation }: any) {
                 )}
               </TouchableOpacity>
             </View>
+=======
+            <CustomTextInput
+              placeholder="••••••••"
+              value={formData.password}
+              onChangeText={(text) =>
+                setFormData({ ...formData, password: text })
+              }
+              secureTextEntry={!showPassword}
+              autoCapitalize="none"
+              rightActionIcon={
+                showPassword ? (
+                  <MaterialIcons
+                    name="visibility-off"
+                    size={20}
+                    color="#9CA3AF"
+                  />
+                ) : (
+                  <MaterialIcons name="visibility" size={20} color="#9CA3AF" />
+                )
+              }
+              onRightActionPress={() => setShowPassword((prev) => !prev)}
+            />
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
           </View>
 
           {/* Confirm Password (Registration only) */}
           {!isLogin && (
             <View style={styles.formGroup}>
               <Text style={styles.label}>Confirm Password</Text>
+<<<<<<< HEAD
               <TextInput
                 style={styles.input}
                 placeholder="••••••••"
                 value={formData.confirmPassword}
                 onChangeText={(text) => setFormData({...formData, confirmPassword: text})}
+=======
+              <CustomTextInput
+                placeholder="••••••••"
+                value={formData.confirmPassword}
+                onChangeText={(text) =>
+                  setFormData({ ...formData, confirmPassword: text })
+                }
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"
               />
@@ -382,6 +474,7 @@ const styles = StyleSheet.create({
     color: '#374151',
     marginBottom: 8,
   },
+<<<<<<< HEAD
   input: {
     backgroundColor: '#F9FAFB',
     borderWidth: 1,
@@ -408,6 +501,8 @@ const styles = StyleSheet.create({
     top: 14,
     padding: 4,
   },
+=======
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
   forgotPassword: {
     alignItems: 'flex-end',
     marginBottom: 16,
@@ -449,4 +544,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 24,
   },
+<<<<<<< HEAD
 });
+=======
+});
+>>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
