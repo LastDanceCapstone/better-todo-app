@@ -17,7 +17,7 @@ This repository will serve as the general workspace for all changes, updates, an
 ----------
  
 # Project Links
-- **Kanban Board:** https://trello.com/b/CSWlLk7f/capstone-kanban
+- **Kanban Board:** https://trello.com/b/8E3yaviu/sprint-0
 - **Team Zoom:** https://us05web.zoom.us/j/87439424208?pwd=IuVsDdhyVNlJAh7mNVkwqRSrUSQjti.1
   -   Meeting ID: 874 3942 4208
   -   Passcode: 7epwSw

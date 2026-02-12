@@ -15,7 +15,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 
-const API_BASE_URL = 'http://100.100.209.29:3000';
+const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
 
 export default function LoginScreen({ navigation }: any) {
   const [isLogin, setIsLogin] = useState(true);
@@ -114,11 +114,15 @@ export default function LoginScreen({ navigation }: any) {
           [
             {
               text: 'OK',
-              onPress: () => navigation.replace('Home', { 
-                email: formData.email,
-                token: data.token,
-                user: data.user 
-              })
+              onPress: () =>
+                navigation.replace('Main', {
+                  screen: 'Home',
+                  params: {
+                    email: formData.email,
+                    token: data.token,
+                    user: data.user,
+                  },
+                })
             }
           ]
         );

@@ -1,30 +1,49 @@
 // src/screens/HomeScreen.tsx
-import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, FlatList, StyleSheet, Alert, ActivityIndicator } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { View, Text, TouchableOpacity, FlatList, StyleSheet, Alert, ActivityIndicator, Image } from 'react-native';
+import { useTheme } from '../theme';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import SwipeableTaskCard from '../components/SwipeableTaskCard';
 
 // Update the API base URL to match your current IP
-const API_BASE_URL = 'http://100.100.209.29:3000';
+const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
 
 type Task = {
   id: string;
   title: string;
-  description: string;
-  dueDate?: string;
-  status: 'ACTIVE' | 'COMPLETED';
-  priority?: 'LOW' | 'MEDIUM' | 'HIGH';
+  description?: string;
+  dueAt?: string;
+  completedAt?: string;
+  statusChangedAt?: string;
+  status: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+  priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
   createdAt: string;
   updatedAt: string;
+  userId: string;
+  subtasks?: Subtask[];
+};
+
+type Subtask = {
+  id: string;
+  title: string;
+  description?: string;
+  status: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+  completedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  taskId: string;
 };
 
 export default function HomeScreen({ route, navigation }: any) {
-  const [tab, setTab] = useState<'ACTIVE' | 'COMPLETED'>('ACTIVE');
-  const [activeNav, setActiveNav] = useState('Home');
+  const { colors } = useTheme();
+  const [tab, setTab] = useState<'TODO' | 'COMPLETED'>('TODO');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<any>(null);
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
 
   // Get user data from route params or AsyncStorage
   useEffect(() => {
@@ -47,6 +66,26 @@ export default function HomeScreen({ route, navigation }: any) {
 
     getUserData();
   }, [route]);
+
+  // Load avatar when screen comes into focus
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      loadAvatar();
+    });
+
+    return unsubscribe;
+  }, [navigation]);
+
+  const loadAvatar = async () => {
+    try {
+      const savedAvatar = await AsyncStorage.getItem('userAvatar');
+      if (savedAvatar) {
+        setAvatarUri(savedAvatar);
+      }
+    } catch (error) {
+      console.error('Error loading avatar:', error);
+    }
+  };
 
   // Fetch tasks from backend
   const fetchTasks = async () => {
@@ -96,10 +135,60 @@ export default function HomeScreen({ route, navigation }: any) {
     }
   };
 
-  // Fetch tasks when component mounts
+  // Handle status change
+  const handleStatusChange = async (taskId: string, newStatus: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED') => {
+    try {
+      const token = await AsyncStorage.getItem('authToken');
+      
+      if (!token) {
+        Alert.alert('Error', 'No authentication token found');
+        return;
+      }
+
+      const completedAt = newStatus === 'COMPLETED' ? new Date().toISOString() : null;
+
+      const response = await fetch(`${API_BASE_URL}/api/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ status: newStatus, completedAt }),
+      });
+
+      if (response.ok) {
+        // Update local state
+        setTasks(prevTasks =>
+          prevTasks.map(task =>
+            task.id === taskId ? { ...task, status: newStatus, completedAt: completedAt || undefined } : task
+          )
+        );
+        
+        Alert.alert(
+          'Success',
+          `Task ${newStatus === 'COMPLETED' ? 'completed' : 'updated'} successfully!`
+        );
+      } else {
+        const errorData = await response.json();
+        Alert.alert('Error', errorData.error || 'Failed to update task');
+      }
+    } catch (error) {
+      console.error('Error updating task status:', error);
+      Alert.alert('Error', 'Failed to update task status');
+    }
+  };
+
+  // Fetch tasks when component mounts and when screen comes into focus
   useEffect(() => {
     fetchTasks();
-  }, []);
+    
+    // Add listener to refresh tasks when screen comes into focus
+    const unsubscribe = navigation.addListener('focus', () => {
+      fetchTasks();
+    });
+
+    return unsubscribe;
+  }, [navigation]);
 
   // Helper function to format due date
   const formatDueDate = (dueDate?: string) => {
@@ -133,351 +222,438 @@ export default function HomeScreen({ route, navigation }: any) {
   };
 
   const filteredTasks = tasks.filter((t) =>
-    tab === 'ACTIVE' ? t.status === 'ACTIVE' : t.status === 'COMPLETED'
+    tab === 'TODO'
+      ? t.status === 'TODO' || t.status === 'IN_PROGRESS'
+      : t.status === 'COMPLETED'
   );
 
-  // Get welcome message
-  const welcomeMessage = user 
-    ? `Welcome back, ${user.firstName} 👋` 
-    : 'Welcome back 👋';
+  const getInitials = () => {
+    if (!user) return '?';
+    const firstName = user.firstName || '';
+    const lastName = user.lastName || '';
+    const firstInitial = firstName.charAt(0)?.toUpperCase() || '';
+    const lastInitial = lastName.charAt(0)?.toUpperCase() || '';
+    return `${firstInitial}${lastInitial}` || '?';
+  };
+
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Good morning';
+    if (hour < 18) return 'Good afternoon';
+    return 'Good evening';
+  };
+
+  const { activeCount, completedCount } = useMemo(() => {
+    const active = tasks.filter((t) => t.status === 'TODO' || t.status === 'IN_PROGRESS').length;
+    const completed = tasks.filter((t) => t.status === 'COMPLETED').length;
+
+    return {
+      activeCount: active,
+      completedCount: completed,
+    };
+  }, [tasks]);
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-          <ActivityIndicator size="large" color="#4E8FFF" />
-          <Text style={{ marginTop: 16, fontSize: 16 }}>Loading your tasks...</Text>
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={[styles.loadingText, { color: colors.mutedText }]}>Loading your tasks...</Text>
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.headerContent}>
-          {/* Avatar */}
-          <View style={styles.avatarContainer}>
-            <MaterialIcons name="account-circle" size={48} color="#E0E0E0" />
-          </View>
-          
-          {/* Title Container */}
-          <View style={styles.titleContainer}>
-            <Text style={styles.greeting}>Hello!</Text>
-            <Text style={styles.welcome}>{user?.firstName || 'User'} 👋</Text>
-          </View>
-
-          {/* Notifications Icon */}
-          <TouchableOpacity 
-            style={styles.notificationsIcon} 
-            onPress={() => alert('Notifications clicked!')}
-          >
-            <MaterialIcons name="notifications" size={24} color="#000000" />
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* Tabs */}
-      <View style={styles.tabs}>
-        <TouchableOpacity
-          style={[styles.tab, tab === 'ACTIVE' && styles.tabActive]}
-          onPress={() => setTab('ACTIVE')}
-        >
-          <Text style={[styles.tabText, tab === 'ACTIVE' && styles.tabTextActive]}>
-            Active ({tasks.filter(t => t.status === 'ACTIVE').length})
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tab, tab === 'COMPLETED' && styles.tabActive]}
-          onPress={() => setTab('COMPLETED')}
-        >
-          <Text style={[styles.tabText, tab === 'COMPLETED' && styles.tabTextActive]}>
-            Completed ({tasks.filter(t => t.status === 'COMPLETED').length})
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Task List */}
-      {filteredTasks.length === 0 ? (
-        <View style={styles.emptyState}>
-          <MaterialIcons 
-            name={tab === 'ACTIVE' ? "assignment" : "check-circle"} 
-            size={48} 
-            color="#ccc" 
-          />
-          <Text style={styles.emptyText}>
-            {tab === 'ACTIVE' ? 'No active tasks yet!' : 'No completed tasks yet!'}
-          </Text>
-          <Text style={styles.emptySubtext}>
-            {tab === 'ACTIVE' ? 'Create your first task to get started.' : 'Complete some tasks to see them here.'}
-          </Text>
-        </View>
-      ) : (
-        <FlatList
-          data={filteredTasks}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={{ paddingBottom: 120 }}
-          refreshing={loading}
-          onRefresh={fetchTasks}
-          renderItem={({ item }) => (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+        {/* Hero Header */}
+        <View style={[styles.heroHeader, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+          <View style={styles.headerContent}>
             <TouchableOpacity
-              style={styles.taskCard}
-              onPress={() => navigation.navigate('TaskDetails', { task: item })}
+              style={styles.avatarTouchable}
+              onPress={() => navigation.navigate('Account')}
               activeOpacity={0.7}
             >
-              {/* Priority Tag */}
-              {item.priority && (
-                <View style={[styles.badge, styles[`priority${item.priority}`]]}>
-                  <Text style={[styles.badgeText, styles[`priorityText${item.priority}`]]}>
-                    {item.priority}
-                  </Text>
+              {avatarUri ? (
+                <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
+              ) : (
+                <View style={[styles.avatarPlaceholder, { backgroundColor: colors.primary }]}>
+                  <Text style={[styles.avatarInitials, { color: colors.surface }]}>{getInitials()}</Text>
                 </View>
               )}
-
-              {/* Task Content */}
-              <View>
-                <Text style={styles.taskTitle}>{item.title}</Text>
-                <Text style={styles.taskDescription}>
-                  {item.description || 'No description'}
-                </Text>
-              </View>
-
-              {/* Black Line */}
-              <View style={styles.separator} />
-
-              {/* Bottom Section */}
-              <View style={styles.taskFooter}>
-                <View style={styles.footerLeft}>
-                  <MaterialIcons name="access-time" size={16} color="grey" />
-                  <Text style={styles.timeLeft}>{formatDueDate(item.dueDate)}</Text>
-                </View>
-                <Text style={styles.dueDate}>
-                  Due: {formatDisplayDate(item.dueDate)}
-                </Text>
-              </View>
             </TouchableOpacity>
-          )}
-        />
-      )}
 
-      {/* Bottom Navigation - Same as before */}
-      <View style={styles.bottomNav}>
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => setActiveNav('Home')}
-        >
-          <MaterialIcons
-            name="home"
-            size={24}
-            color={activeNav === 'Home' ? '#2563EB' : '#000000'}
-          />
-          <Text
-            style={[
-              styles.navText,
-              activeNav === 'Home' && styles.navTextActive,
-            ]}
-          >
-            Home
-          </Text>
-        </TouchableOpacity>
+            <View style={styles.greetingContainer}>
+              <Text style={[styles.greeting, { color: colors.mutedText }]}>{getGreeting()}</Text>
+              <Text style={[styles.welcome, { color: colors.text }]}>{user?.firstName || 'User'} 👋</Text>
+              <Text style={[styles.subtitle, { color: colors.mutedText }]}>Let's make progress today.</Text>
+            </View>
 
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => setActiveNav('Create')}
-        >
-          <MaterialIcons
-            name="add-circle"
-            size={24}
-            color={activeNav === 'Create' ? '#2563EB' : '#000000'}
-          />
-          <Text
-            style={[
-              styles.navText,
-              activeNav === 'Create' && styles.navTextActive,
-            ]}
-          >
-            Create
-          </Text>
-        </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.notificationButton, { backgroundColor: colors.background, borderColor: colors.border }]}
+              onPress={() => alert('Notifications clicked!')}
+              activeOpacity={0.7}
+            >
+              <MaterialIcons name="notifications" size={22} color={colors.text} />
+            </TouchableOpacity>
+          </View>
+        </View>
 
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => setActiveNav('Calendar')}
-        >
-          <MaterialIcons
-            name="calendar-today"
-            size={24}
-            color={activeNav === 'Calendar' ? '#2563EB' : '#000000'}
-          />
-          <Text
-            style={[
-              styles.navText,
-              activeNav === 'Calendar' && styles.navTextActive,
-            ]}
-          >
-            Calendar
-          </Text>
-        </TouchableOpacity>
+        <AiEntryCard navigation={navigation} />
 
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => setActiveNav('Account')}
-        >
-          <MaterialIcons
-            name="account-circle"
-            size={24}
-            color={activeNav === 'Account' ? '#2563EB' : '#000000'}
+        {/* Tabs */}
+        <View style={[styles.tabsSection, { backgroundColor: colors.background }]}>
+          <View style={[styles.tabsContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <TouchableOpacity
+              style={[
+                styles.tab,
+                tab === 'TODO' && [styles.tabActive, { backgroundColor: colors.primary, shadowColor: colors.primary }],
+              ]}
+              onPress={() => setTab('TODO')}
+              activeOpacity={0.7}
+            >
+              <Text
+                style={[
+                  styles.tabText,
+                  { color: colors.mutedText },
+                  tab === 'TODO' && [styles.tabTextActive, { color: colors.surface }],
+                ]}
+              >
+                Active
+              </Text>
+              <Text
+                style={[
+                  styles.tabCount,
+                  { color: colors.mutedText },
+                  tab === 'TODO' && [styles.tabCountActive, { color: colors.surface }],
+                ]}
+              >
+                {activeCount}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.tab,
+                tab === 'COMPLETED' && [styles.tabActive, { backgroundColor: colors.primary, shadowColor: colors.primary }],
+              ]}
+              onPress={() => setTab('COMPLETED')}
+              activeOpacity={0.7}
+            >
+              <Text
+                style={[
+                  styles.tabText,
+                  { color: colors.mutedText },
+                  tab === 'COMPLETED' && [styles.tabTextActive, { color: colors.surface }],
+                ]}
+              >
+                Completed
+              </Text>
+              <Text
+                style={[
+                  styles.tabCount,
+                  { color: colors.mutedText },
+                  tab === 'COMPLETED' && [styles.tabCountActive, { color: colors.surface }],
+                ]}
+              >
+                {completedCount}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={styles.sectionHeader}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Your Tasks</Text>
+        </View>
+
+        {filteredTasks.length === 0 ? (
+          <View style={styles.emptyState}>
+            <MaterialIcons
+              name={tab === 'TODO' ? 'assignment' : 'check-circle'}
+              size={56}
+              color={colors.border}
+            />
+            <Text style={[styles.emptyText, { color: colors.text }]}>
+              {tab === 'TODO' ? 'No active tasks yet' : 'No completed tasks yet'}
+            </Text>
+            <Text style={[styles.emptySubtext, { color: colors.mutedText }]}>
+              {tab === 'TODO'
+                ? 'Create your first task to get started'
+                : 'Complete some tasks to see them here'}
+            </Text>
+            {tab === 'TODO' && (
+              <TouchableOpacity
+                style={[styles.primaryCta, { backgroundColor: colors.primary }]}
+                onPress={() => navigation.navigate('Create')}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.primaryCtaText, { color: colors.surface }]}>Create your first task</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        ) : (
+          <FlatList
+            data={filteredTasks}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.taskListContent}
+            refreshing={loading}
+            onRefresh={fetchTasks}
+            showsVerticalScrollIndicator={false}
+            renderItem={({ item }) => (
+              <SwipeableTaskCard
+                task={item}
+                onPress={() => navigation.navigate('TaskDetails', { task: item })}
+                onStatusChange={handleStatusChange}
+                formatDueDate={formatDueDate}
+                formatDisplayDate={formatDisplayDate}
+              />
+            )}
           />
-          <Text
-            style={[
-              styles.navText,
-              activeNav === 'Account' && styles.navTextActive,
-            ]}
-          >
-            Account
-          </Text>
-        </TouchableOpacity>
-      </View>
-    </SafeAreaView>
+        )}
+      </SafeAreaView>
+    </GestureHandlerRootView>
   );
 }
 
+const AiEntryCard = ({ navigation }: { navigation: any }) => {
+  const { colors } = useTheme();
+
+  const handlePress = () => {
+    Alert.alert('Coming soon', 'AI task creation will live here');
+  };
+
+  return (
+    <TouchableOpacity
+      style={[styles.aiCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+      onPress={handlePress}
+      activeOpacity={0.85}
+    >
+      <View style={[styles.aiIconBadge, { backgroundColor: colors.primary + '1A' }]}>
+        <MaterialIcons name="auto-awesome" size={20} color={colors.primary} />
+      </View>
+      <View style={styles.aiTextWrap}>
+        <Text style={[styles.aiTitle, { color: colors.text }]}>Smart Add</Text>
+        <Text style={[styles.aiSubtitle, { color: colors.mutedText }]}>
+          Describe a task in plain English. We'll structure it for you.
+        </Text>
+      </View>
+      <View style={[styles.aiAction, { backgroundColor: colors.background, borderColor: colors.border }]}>
+        <MaterialIcons name="chevron-right" size={20} color={colors.mutedText} />
+      </View>
+    </TouchableOpacity>
+  );
+};
+
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#FFFFFF' },
-  header: {
-    padding: 16,
+  // Main container
+  container: { 
+    flex: 1,
+  },
+  
+  // Loading state
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    fontWeight: '500',
+  },
+
+  // Hero header
+  heroHeader: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#000000',
+    overflow: 'hidden',
   },
   headerContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between', 
+    justifyContent: 'space-between',
   },
-  avatarContainer: {
-    backgroundColor: '#F5F5F5',
-    borderRadius: 24,
-    width: 48,
-    height: 48,
+  
+  // Avatar - Larger (56x56) and more prominent
+  avatarTouchable: {
+    borderRadius: 28,
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+  },
+  avatarPlaceholder: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  titleContainer: {
-    flex: 1,
-    marginLeft: 12, 
-  },
-  greeting: { 
-    fontSize: 14, 
-    color: '#000000', 
-    marginBottom: 2 
-  },
-  welcome: { 
-    fontSize: 20, 
-    fontWeight: '700', 
-    color: '#000000' 
-  },
-  subtitle: { fontSize: 11, color: '#000000', marginTop: 4 },
-  notificationsIcon: {
-    padding: 8, 
-  },
-  tabs: { flexDirection: 'row', justifyContent: 'space-around', marginVertical: 16 },
-  tab: {
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    backgroundColor: '#F2F2F2',
-  },
-  tabActive: { backgroundColor: '#4E8FFF' },
-  tabText: { fontSize: 12, fontWeight: '700', color: '#000000' },
-  tabTextActive: { color: '#FFFFFF' },
-  taskCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 20, 
-    marginHorizontal: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 4,
-    position: 'relative',
-  
-    borderWidth: 1,
-    borderColor: '#E5E5E5', 
-  },
-  taskTitle: { fontSize: 16, fontWeight: '700', color: '#000000' },
-  taskDescription: { fontSize: 12, color: '#000000', marginTop: 4 },
-  separator: {
-    height: 1,
-    backgroundColor: '#000000',
-    marginVertical: 8,
-  },
-  taskFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  footerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  timeLeft: { fontSize: 12, color: 'grey', marginLeft: 4 },
-  dueDate: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
-  badge: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 14,
-  },
-  badgeText: {
-    fontSize: 10,
+  avatarInitials: {
+    fontSize: 20,
     fontWeight: '700',
-    color: '#FFFFFF',
   },
-  priorityHIGH: { backgroundColor: 'rgba(255, 53, 53, 0.3)' },
-  priorityMEDIUM: { backgroundColor: 'rgba(255, 184, 0, 0.3)' },
-  priorityLOW: { backgroundColor: 'rgba(0, 200, 83, 0.3)' },
-  priorityTextHIGH: { color: '#FF4D4D' },
-  priorityTextMEDIUM: { color: '#FFB800' },
-  priorityTextLOW: { color: '#00C853' },
-  bottomNav: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 85,
-    backgroundColor: '#FFFFFF',
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(0, 0, 0, 0.15)',
-  },
-  navItem: { alignItems: 'center' },
-  navText: { fontSize: 12, color: '#000000', marginTop: 4 },
-  navTextActive: { color: '#2563EB' },
-  
 
+  greetingContainer: {
+    flex: 1,
+    marginLeft: 16,
+    justifyContent: 'center',
+  },
+  greeting: {
+    fontSize: 13,
+    marginBottom: 2,
+    fontWeight: '500',
+  },
+  welcome: {
+    fontSize: 22,
+    fontWeight: '700',
+  },
+  subtitle: {
+    fontSize: 13,
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  
+  // Notification button - Rounded with touch feedback
+  notificationButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+  },
+
+  // AI entry card
+  aiCard: {
+    marginHorizontal: 20,
+    marginTop: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  aiIconBadge: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  aiTextWrap: {
+    flex: 1,
+  },
+  aiTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  aiSubtitle: {
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 4,
+  },
+  aiAction: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Tabs
+  tabsSection: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+  },
+  tabsContainer: {
+    flexDirection: 'row',
+    borderRadius: 14,
+    padding: 4,
+    borderWidth: 1,
+  },
+  tab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    gap: 6,
+  },
+  tabActive: {
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  tabText: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  tabTextActive: {
+  },
+  tabCount: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  tabCountActive: {
+  },
+
+  sectionHeader: {
+    paddingHorizontal: 20,
+    paddingBottom: 6,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+
+  // Task list
+  taskListContent: {
+    paddingTop: 6,
+    paddingBottom: 120,
+  },
+
+  // Empty state - Softer colors and better spacing
   emptyState: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: 40,
     paddingBottom: 120,
   },
   emptyText: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#666',
-    marginTop: 16,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    color: '#999',
-    marginTop: 8,
+    marginTop: 20,
     textAlign: 'center',
   },
+  emptySubtext: {
+    fontSize: 15,
+    fontWeight: '400',
+    marginTop: 8,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  primaryCta: {
+    marginTop: 18,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 999,
+  },
+  primaryCtaText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+
 });
