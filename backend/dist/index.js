@@ -10,6 +10,7 @@ const swagger_ui_express_1 = __importDefault(require("swagger-ui-express"));
 const swagger_1 = require("./swagger");
 const auth_1 = __importDefault(require("./routes/auth"));
 const tasks_1 = __importDefault(require("./routes/tasks"));
+const ai_1 = __importDefault(require("./routes/ai"));
 const cors_1 = __importDefault(require("cors"));
 dotenv_1.default.config();
 const app = (0, express_1.default)();
@@ -39,6 +40,7 @@ app.get('/api/docs', swagger_ui_express_1.default.setup(swagger_1.swaggerSpec, {
 // API Routes
 app.use('/api', auth_1.default);
 app.use('/api', tasks_1.default);
+app.use('/api', ai_1.default);
 // Health check
 app.get('/api/health', (req, res) => {
     res.json({
@@ -77,6 +79,9 @@ app.get('/', (req, res) => {
                 create: 'POST /api/tasks/:id/subtasks',
                 update: 'PATCH /api/subtasks/:id',
                 delete: 'DELETE /api/subtasks/:id',
+            },
+            ai: {
+                parseTask: 'POST /api/ai/parse-task',
             },
         },
     });

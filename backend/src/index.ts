@@ -5,6 +5,7 @@ import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './swagger';
 import authRoutes from './routes/auth';
 import taskRoutes from './routes/tasks';
+import aiRoutes from './routes/ai';
 import cors from 'cors';
 
 dotenv.config();
@@ -42,6 +43,7 @@ app.get('/api/docs', swaggerUi.setup(swaggerSpec, {
 // API Routes
 app.use('/api', authRoutes);
 app.use('/api', taskRoutes);
+app.use('/api', aiRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -83,6 +85,9 @@ app.get('/', (req, res) => {
         create: 'POST /api/tasks/:id/subtasks',
         update: 'PATCH /api/subtasks/:id',
         delete: 'DELETE /api/subtasks/:id',
+      },
+      ai: {
+        parseTask: 'POST /api/ai/parse-task',
       },
     },
   });

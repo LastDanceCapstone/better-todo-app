@@ -72,12 +72,66 @@ const options = {
             error: { type: 'string', example: 'Invalid credentials' },
           },
         },
+        ValidationError: {
+          type: 'object',
+          properties: {
+            error: { type: 'string', example: 'Parsed task output failed validation' },
+            issues: {
+              type: 'array',
+              items: { type: 'string' },
+              example: ['Missing required field: title'],
+            },
+          },
+        },
+        ParseTaskRequest: {
+          type: 'object',
+          required: ['text'],
+          properties: {
+            text: {
+              type: 'string',
+              example: 'Finish sprint demo, high priority, subtasks: record video, push branch',
+            },
+            timezone: {
+              type: 'string',
+              example: 'America/New_York',
+              description: 'Optional IANA timezone used to resolve relative dates',
+            },
+          },
+        },
+        ParsedTask: {
+          type: 'object',
+          required: ['title', 'description', 'dueDate', 'priority', 'labels', 'subtasks'],
+          properties: {
+            title: { type: 'string', nullable: true, example: 'Finish sprint demo' },
+            description: { type: 'string', nullable: true, example: null },
+            dueDate: { type: 'string', format: 'date-time', nullable: true, example: '2026-02-20T17:00:00.000Z' },
+            priority: {
+              type: 'string',
+              enum: ['LOW', 'MEDIUM', 'HIGH'],
+              nullable: true,
+              example: 'HIGH',
+            },
+            labels: {
+              type: 'array',
+              nullable: true,
+              items: { type: 'string' },
+              example: ['work', 'sprint'],
+            },
+            subtasks: {
+              type: 'array',
+              nullable: true,
+              items: { type: 'string' },
+              example: ['record video', 'push branch'],
+            },
+          },
+        },
       },
     },
     tags: [
       { name: 'Authentication', description: 'User authentication endpoints' },
       { name: 'Tasks', description: 'Task management endpoints' },
       { name: 'Subtasks', description: 'Subtask management endpoints' },
+      { name: 'AI', description: 'AI-assisted parsing endpoints' },
     ],
     // NO paths object here - let swagger-jsdoc build from JSDoc comments
   },
