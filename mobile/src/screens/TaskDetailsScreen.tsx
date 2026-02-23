@@ -14,13 +14,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const API_BASE_URL = 'http://100.100.66.131:3000';
+const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
 
 type Subtask = {
   id: string;
   title: string;
   description?: string;
-  isCompleted: boolean;
+  status: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+  completedAt?: string;
   createdAt: string;
 };
 
@@ -28,9 +29,11 @@ type Task = {
   id: string;
   title: string;
   description?: string;
-  dueDate?: string;
-  status: 'ACTIVE' | 'COMPLETED';
-  priority?: 'LOW' | 'MEDIUM' | 'HIGH';
+  dueAt?: string;
+  completedAt?: string;
+  statusChangedAt?: string;
+  status: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+  priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
   createdAt: string;
   updatedAt: string;
   subtasks?: Subtask[];
@@ -40,7 +43,7 @@ type EditableSubtask = {
   id: string;
   title: string;
   description?: string;
-  isCompleted: boolean;
+  status: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
   isDeleted?: boolean;
 };
 
@@ -161,7 +164,7 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
         id: `temp_${Date.now()}`, // Temporary ID for new subtasks
         title: '',
         description: '',
-        isCompleted: false,
+        status: 'TODO',
         isDeleted: false,
       },
     ]);
@@ -293,7 +296,8 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
         return;
       }
 
-      const newStatus = task.status === 'ACTIVE' ? 'COMPLETED' : 'ACTIVE';
+      const newStatus = task.status === 'COMPLETED' ? 'TODO' : 'COMPLETED';
+      const completedAt = newStatus === 'COMPLETED' ? new Date().toISOString() : undefined;
 
       const response = await fetch(`${API_BASE_URL}/api/tasks/${task.id}`, {
         method: 'PATCH',
@@ -301,7 +305,7 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ status: newStatus }),
+        body: JSON.stringify({ status: newStatus, completedAt }),
       });
 
       if (response.ok) {
@@ -376,7 +380,7 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
   };
 
   // Toggle subtask completion
-  const toggleSubtask = async (subtaskId: string, currentStatus: boolean) => {
+  const toggleSubtask = async (subtaskId: string, currentStatus: string) => {
     try {
       const token = await AsyncStorage.getItem('authToken');
       
@@ -385,13 +389,16 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
         return;
       }
 
+      const newStatus = currentStatus === 'COMPLETED' ? 'TODO' : 'COMPLETED';
+      const completedAt = newStatus === 'COMPLETED' ? new Date().toISOString() : undefined;
+
       const response = await fetch(`${API_BASE_URL}/api/subtasks/${subtaskId}`, {
         method: 'PATCH',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ isCompleted: !currentStatus }),
+        body: JSON.stringify({ status: newStatus, completedAt }),
       });
 
       if (response.ok) {
@@ -402,7 +409,7 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
           return {
             ...prevTask,
             subtasks: prevTask.subtasks?.map((st) =>
-              st.id === subtaskId ? { ...st, isCompleted: !currentStatus } : st
+              st.id === subtaskId ? { ...st, status: newStatus, completedAt } : st
             ),
           };
         });
@@ -608,8 +615,8 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
                 <MaterialIcons name="event" size={22} color="#2563EB" />
               </View>
               <View style={styles.infoContent}>
-                <Text style={styles.infoMainText}>{formatRelativeDate(task.dueDate)}</Text>
-                <Text style={styles.infoSubText}>{formatDate(task.dueDate)}</Text>
+                <Text style={styles.infoMainText}>{formatRelativeDate(task.dueAt)}</Text>
+                <Text style={styles.infoSubText}>{formatDate(task.dueAt)}</Text>
               </View>
             </View>
           </View>
@@ -622,7 +629,7 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
               <Text style={styles.sectionTitle}>Subtasks</Text>
               {!isEditing && (
                 <Text style={styles.subtaskCount}>
-                  {task.subtasks?.filter((st) => st.isCompleted).length}/{task.subtasks?.length} completed
+                  {task.subtasks?.filter((st) => st.status === 'COMPLETED').length}/{task.subtasks?.length} completed
                 </Text>
               )}
             </View>
@@ -672,21 +679,21 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
                 <TouchableOpacity
                   key={subtask.id}
                   style={styles.subtaskCard}
-                  onPress={() => toggleSubtask(subtask.id, subtask.isCompleted)}
+                  onPress={() => toggleSubtask(subtask.id, subtask.status)}
                   activeOpacity={0.7}
                 >
                   <View style={styles.subtaskCheckbox}>
                     <MaterialIcons
-                      name={subtask.isCompleted ? 'check-circle' : 'radio-button-unchecked'}
+                      name={subtask.status === 'COMPLETED' ? 'check-circle' : 'radio-button-unchecked'}
                       size={24}
-                      color={subtask.isCompleted ? '#00C853' : '#9CA3AF'}
+                      color={subtask.status === 'COMPLETED' ? '#00C853' : '#9CA3AF'}
                     />
                   </View>
                   <View style={styles.subtaskContent}>
                     <Text
                       style={[
                         styles.subtaskTitle,
-                        subtask.isCompleted && styles.subtaskTitleCompleted,
+                        subtask.status === 'COMPLETED' && styles.subtaskTitleCompleted,
                       ]}
                     >
                       {subtask.title}

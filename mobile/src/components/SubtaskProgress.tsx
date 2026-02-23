@@ -1,100 +1,99 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import Svg, { Circle } from 'react-native-svg';
+import React, { useEffect, useRef, useState } from 'react';
+import { Animated, StyleSheet, Text, View } from 'react-native';
+import { useTheme } from '../theme';
 
 interface SubtaskProgressProps {
-  subtasks?: Array<{ isCompleted: boolean }>;
-  size?: number;
-  strokeWidth?: number;
+  subtasks?: Array<{ status: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' }>;
+  height?: number;
+  slantDegrees?: number;
+  showLabel?: boolean;
 }
 
-export default function SubtaskProgress({ 
-  subtasks, 
-  size = 50, 
-  strokeWidth = 4 
+export default function SubtaskProgress({
+  subtasks,
+  height = 8,
+  slantDegrees = -6,
+  showLabel = false,
 }: SubtaskProgressProps) {
-  // Don't render if no subtasks
   if (!subtasks || subtasks.length === 0) {
     return null;
   }
 
   const totalSubtasks = subtasks.length;
-  const completedSubtasks = subtasks.filter(s => s.isCompleted).length;
+  const completedSubtasks = subtasks.filter((subtask) => subtask.status === 'COMPLETED').length;
   const completionRatio = completedSubtasks / totalSubtasks;
   const completionPercent = Math.round(completionRatio * 100);
 
-  // Circle calculations
-  const radius = (size - strokeWidth) / 2;
-  const circumference = radius * 2 * Math.PI;
-  const strokeDashoffset = circumference - (completionRatio * circumference);
+  const { colors } = useTheme();
+  const [trackWidth, setTrackWidth] = useState(0);
+  const progressAnim = useRef(new Animated.Value(completionRatio)).current;
+  const trackColor = colors.card || '#E5E7EB';
+  const fillColor = colors.primary;
+  const innerWidth = Math.max(trackWidth, 0);
 
-  // Color based on completion
-  const getProgressColor = () => {
-    if (completionPercent === 100) return '#00C853'; // Green
-    if (completionPercent >= 50) return '#FFB800'; // Orange
-    return '#4E8FFF'; // Blue
-  };
+  useEffect(() => {
+    Animated.timing(progressAnim, {
+      toValue: completionRatio,
+      duration: 280,
+      useNativeDriver: false,
+    }).start();
+  }, [completionRatio, progressAnim]);
+
+  const animatedWidth = progressAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, innerWidth],
+  });
+
+  const label = `${completionPercent}%`;
+  const labelSize = Math.max(12, Math.round(height * 1.5));
 
   return (
-    <View style={[styles.container, { width: size, height: size }]}>
-      <Svg width={size} height={size} style={styles.svg}>
-        {/* Background circle */}
-        <Circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          stroke="#E5E5E5"
-          strokeWidth={strokeWidth}
-          fill="none"
+    <View style={styles.container}>
+      <View
+        style={[
+          styles.track,
+          {
+            height,
+            borderRadius: height / 2,
+            backgroundColor: trackColor,
+            transform: [{ skewX: `${slantDegrees}deg` }],
+          },
+        ]}
+        onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)}
+      >
+        <Animated.View
+          style={[
+            styles.fill,
+            {
+              height,
+              width: animatedWidth,
+              borderRadius: height / 2,
+              backgroundColor: fillColor,
+            },
+          ]}
         />
-        {/* Progress circle */}
-        <Circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          stroke={getProgressColor()}
-          strokeWidth={strokeWidth}
-          fill="none"
-          strokeDasharray={circumference}
-          strokeDashoffset={strokeDashoffset}
-          strokeLinecap="round"
-          rotation="-90"
-          origin={`${size / 2}, ${size / 2}`}
-        />
-      </Svg>
-      {/* Center text */}
-      <View style={styles.textContainer}>
-        <Text style={[styles.percentText, { color: getProgressColor() }]}>
-          {completionPercent}%
-        </Text>
-        <Text style={styles.fractionText}>
-          {completedSubtasks}/{totalSubtasks}
-        </Text>
       </View>
+      {showLabel ? (
+        <Text style={[styles.label, { color: colors.text, fontSize: labelSize }]}>{label}</Text>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    position: 'relative',
-    justifyContent: 'center',
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
   },
-  svg: {
-    position: 'absolute',
+  track: {
+    flex: 1,
+    overflow: 'hidden',
   },
-  textContainer: {
-    justifyContent: 'center',
-    alignItems: 'center',
+  fill: {
+    alignSelf: 'flex-start',
   },
-  percentText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  fractionText: {
-    fontSize: 8,
-    color: '#666666',
-    marginTop: -2,
+  label: {
+    fontWeight: '600',
   },
 });

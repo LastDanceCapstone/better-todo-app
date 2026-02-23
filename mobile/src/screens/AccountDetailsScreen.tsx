@@ -15,8 +15,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
+import { useTheme, useThemePreference } from '../theme';
 
-const API_BASE_URL = 'http://100.100.66.131:3000';
+const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
 
 interface UserProfile {
   id: string;
@@ -30,10 +31,13 @@ interface SettingRow {
   id: string;
   icon: keyof typeof MaterialIcons.glyphMap;
   label: string;
+  value?: string;
   onPress: () => void;
 }
 
 export default function AccountDetailsScreen({ navigation }: any) {
+  const { colors } = useTheme();
+  const { themePreference, setThemePreference } = useThemePreference();
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
@@ -242,6 +246,40 @@ export default function AccountDetailsScreen({ navigation }: any) {
     return `${firstInitial}${lastInitial}` || '?';
   };
 
+  const themeLabel = themePreference === 'system'
+    ? 'System'
+    : themePreference === 'light'
+      ? 'Light'
+      : 'Dark';
+
+  const handleThemePress = () => {
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ['Cancel', 'Light', 'Dark', 'System'],
+          cancelButtonIndex: 0,
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 1) setThemePreference('light');
+          if (buttonIndex === 2) setThemePreference('dark');
+          if (buttonIndex === 3) setThemePreference('system');
+        }
+      );
+      return;
+    }
+
+    Alert.alert(
+      'Theme',
+      'Choose a theme mode',
+      [
+        { text: 'Light', onPress: () => setThemePreference('light') },
+        { text: 'Dark', onPress: () => setThemePreference('dark') },
+        { text: 'System', onPress: () => setThemePreference('system') },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
+  };
+
   const settingRows: SettingRow[] = [
     {
       id: 'account',
@@ -265,7 +303,8 @@ export default function AccountDetailsScreen({ navigation }: any) {
       id: 'theme',
       icon: 'palette',
       label: 'Theme',
-      onPress: () => console.log('TODO: Navigate to Theme settings'),
+      value: themeLabel,
+      onPress: handleThemePress,
     },
     {
       id: 'notifications',
@@ -277,10 +316,10 @@ export default function AccountDetailsScreen({ navigation }: any) {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#4E8FFF" />
-          <Text style={styles.loadingText}>Loading profile...</Text>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={[styles.loadingText, { color: colors.mutedText }]}>Loading profile...</Text>
         </View>
       </SafeAreaView>
     );
@@ -288,12 +327,12 @@ export default function AccountDetailsScreen({ navigation }: any) {
 
   if (!user) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
         <View style={styles.errorContainer}>
-          <MaterialIcons name="error-outline" size={48} color="#FF4D4D" />
-          <Text style={styles.errorText}>Failed to load profile</Text>
-          <TouchableOpacity style={styles.retryButton} onPress={fetchUserProfile}>
-            <Text style={styles.retryButtonText}>Retry</Text>
+          <MaterialIcons name="error-outline" size={48} color={colors.danger} />
+          <Text style={[styles.errorText, { color: colors.mutedText }]}>Failed to load profile</Text>
+          <TouchableOpacity style={[styles.retryButton, { backgroundColor: colors.primary }]} onPress={fetchUserProfile}>
+            <Text style={[styles.retryButtonText, { color: colors.surface }]}>Retry</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -301,22 +340,23 @@ export default function AccountDetailsScreen({ navigation }: any) {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         {/* Header */}
-        <View style={styles.header}>
+        <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}
+        >
           <TouchableOpacity
             style={styles.backButton}
             onPress={() => navigation.goBack()}
           >
-            <MaterialIcons name="arrow-back" size={24} color="#000000" />
+            <MaterialIcons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Account</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Account</Text>
           <View style={styles.headerSpacer} />
         </View>
 
         {/* Avatar Section */}
-        <View style={styles.avatarSection}>
+        <View style={[styles.avatarSection, { backgroundColor: colors.surface }]}>
           <TouchableOpacity
             style={styles.avatarContainer}
             onPress={handleAvatarPress}
@@ -325,20 +365,20 @@ export default function AccountDetailsScreen({ navigation }: any) {
             {avatarUri ? (
               <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
             ) : (
-              <View style={styles.avatarPlaceholder}>
-                <Text style={styles.avatarInitials}>{getInitials()}</Text>
+              <View style={[styles.avatarPlaceholder, { backgroundColor: colors.primary }]}>
+                <Text style={[styles.avatarInitials, { color: colors.surface }]}>{getInitials()}</Text>
               </View>
             )}
-            <View style={styles.avatarEditBadge}>
-              <MaterialIcons name="camera-alt" size={16} color="#FFFFFF" />
+            <View style={[styles.avatarEditBadge, { backgroundColor: colors.primary, borderColor: colors.surface }]}>
+              <MaterialIcons name="camera-alt" size={16} color={colors.surface} />
             </View>
           </TouchableOpacity>
 
-          <Text style={styles.userName}>
+          <Text style={[styles.userName, { color: colors.text }]}>
             {user.firstName} {user.lastName}
           </Text>
-          <Text style={styles.userEmail}>{user.email}</Text>
-          <Text style={styles.memberSince}>
+          <Text style={[styles.userEmail, { color: colors.mutedText }]}>{user.email}</Text>
+          <Text style={[styles.memberSince, { color: colors.mutedText }]}>
             Member since {new Date(user.createdAt).toLocaleDateString('en-US', { 
               month: 'long', 
               year: 'numeric' 
@@ -348,25 +388,32 @@ export default function AccountDetailsScreen({ navigation }: any) {
 
         {/* Settings List */}
         <View style={styles.settingsSection}>
-          <Text style={styles.sectionTitle}>Settings</Text>
-          <View style={styles.settingsList}>
+          <Text style={[styles.sectionTitle, { color: colors.mutedText }]}>Settings</Text>
+          <View style={[styles.settingsList, { backgroundColor: colors.surface }]}
+          >
             {settingRows.map((row, index) => (
               <TouchableOpacity
                 key={row.id}
                 style={[
                   styles.settingRow,
+                  { borderBottomColor: colors.border },
                   index === settingRows.length - 1 && styles.settingRowLast,
                 ]}
                 onPress={row.onPress}
                 activeOpacity={0.7}
               >
                 <View style={styles.settingRowLeft}>
-                  <View style={styles.settingIconContainer}>
-                    <MaterialIcons name={row.icon} size={22} color="#4E8FFF" />
+                  <View style={[styles.settingIconContainer, { backgroundColor: colors.background }]}>
+                    <MaterialIcons name={row.icon} size={22} color={colors.primary} />
                   </View>
-                  <Text style={styles.settingLabel}>{row.label}</Text>
+                  <Text style={[styles.settingLabel, { color: colors.text }]}>{row.label}</Text>
                 </View>
-                <MaterialIcons name="chevron-right" size={24} color="#CCCCCC" />
+                <View style={styles.settingRowRight}>
+                  {row.value ? (
+                    <Text style={[styles.settingValue, { color: colors.mutedText }]}>{row.value}</Text>
+                  ) : null}
+                  <MaterialIcons name="chevron-right" size={24} color={colors.mutedText} />
+                </View>
               </TouchableOpacity>
             ))}
           </View>
@@ -374,12 +421,12 @@ export default function AccountDetailsScreen({ navigation }: any) {
 
         {/* Logout Button */}
         <TouchableOpacity
-          style={styles.logoutButton}
+          style={[styles.logoutButton, { backgroundColor: colors.surface, borderColor: colors.danger }]}
           onPress={handleLogout}
           activeOpacity={0.8}
         >
-          <MaterialIcons name="logout" size={20} color="#FF4D4D" />
-          <Text style={styles.logoutButtonText}>Log Out</Text>
+          <MaterialIcons name="logout" size={20} color={colors.danger} />
+          <Text style={[styles.logoutButtonText, { color: colors.danger }]}>Log Out</Text>
         </TouchableOpacity>
 
         <View style={{ height: 40 }} />
@@ -547,6 +594,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  settingRowRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   settingIconContainer: {
     width: 36,
     height: 36,
@@ -560,6 +612,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
     color: '#000000',
+  },
+  settingValue: {
+    fontSize: 14,
+    fontWeight: '500',
   },
   logoutButton: {
     flexDirection: 'row',
