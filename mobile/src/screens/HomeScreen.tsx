@@ -7,9 +7,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import SwipeableTaskCard from '../components/SwipeableTaskCard';
-
-// Update the API base URL to match your current IP
-const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
+import { API_BASE_URL, getAuthToken } from '../config/api';
 
 type Task = {
   id: string;
@@ -93,7 +91,7 @@ export default function HomeScreen({ route, navigation }: any) {
       setLoading(true);
       
       // Get token from AsyncStorage
-      const token = await AsyncStorage.getItem('authToken');
+      const token = await getAuthToken();
       
       if (!token) {
         Alert.alert('Error', 'No authentication token found. Please log in again.');
@@ -138,7 +136,7 @@ export default function HomeScreen({ route, navigation }: any) {
   // Handle status change
   const handleStatusChange = async (taskId: string, newStatus: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED') => {
     try {
-      const token = await AsyncStorage.getItem('authToken');
+      const token = await getAuthToken();
       
       if (!token) {
         Alert.alert('Error', 'No authentication token found');
@@ -215,10 +213,15 @@ export default function HomeScreen({ route, navigation }: any) {
     if (!dueDate) return 'No due date';
     
     const date = new Date(dueDate);
-    return date.toLocaleDateString('en-US', { 
+    const formattedDate = date.toLocaleDateString(undefined, {
       month: 'short', 
       day: 'numeric' 
     });
+    const formattedTime = date.toLocaleTimeString([], {
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+    return `${formattedDate} • ${formattedTime}`;
   };
 
   const filteredTasks = tasks.filter((t) =>
@@ -299,9 +302,6 @@ export default function HomeScreen({ route, navigation }: any) {
             </TouchableOpacity>
           </View>
         </View>
-
-        <AiEntryCard navigation={navigation} />
-
         {/* Tabs */}
         <View style={[styles.tabsSection, { backgroundColor: colors.background }]}>
           <View style={[styles.tabsContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -416,36 +416,6 @@ export default function HomeScreen({ route, navigation }: any) {
   );
 }
 
-const AiEntryCard = ({ navigation }: { navigation: any }) => {
-  const { colors } = useTheme();
-
-  const handlePress = () => {
-    Alert.alert('Coming soon', 'AI task creation will live here');
-  };
-
-  return (
-    <TouchableOpacity
-      style={[styles.aiCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
-      onPress={handlePress}
-      activeOpacity={0.85}
-    >
-      <View style={[styles.aiIconBadge, { backgroundColor: colors.primary + '1A' }]}>
-        <MaterialIcons name="auto-awesome" size={20} color={colors.primary} />
-      </View>
-      <View style={styles.aiTextWrap}>
-        <Text style={[styles.aiTitle, { color: colors.text }]}>Smart Add</Text>
-        <Text style={[styles.aiSubtitle, { color: colors.mutedText }]}>
-          Describe a task in plain English. We'll structure it for you.
-        </Text>
-      </View>
-      <View style={[styles.aiAction, { backgroundColor: colors.background, borderColor: colors.border }]}>
-        <MaterialIcons name="chevron-right" size={20} color={colors.mutedText} />
-      </View>
-    </TouchableOpacity>
-  );
-};
-
-
 const styles = StyleSheet.create({
   // Main container
   container: { 
@@ -528,45 +498,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-  },
-
-  // AI entry card
-  aiCard: {
-    marginHorizontal: 20,
-    marginTop: 14,
-    borderRadius: 16,
-    borderWidth: 1,
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  aiIconBadge: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  aiTextWrap: {
-    flex: 1,
-  },
-  aiTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  aiSubtitle: {
-    fontSize: 12,
-    lineHeight: 16,
-    marginTop: 4,
-  },
-  aiAction: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
 
   // Tabs

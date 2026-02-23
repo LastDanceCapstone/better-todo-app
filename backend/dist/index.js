@@ -4,15 +4,14 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 // src/index.ts
+require("dotenv/config");
 const express_1 = __importDefault(require("express"));
-const dotenv_1 = __importDefault(require("dotenv"));
 const swagger_ui_express_1 = __importDefault(require("swagger-ui-express"));
 const swagger_1 = require("./swagger");
 const auth_1 = __importDefault(require("./routes/auth"));
 const tasks_1 = __importDefault(require("./routes/tasks"));
 const ai_1 = __importDefault(require("./routes/ai"));
 const cors_1 = __importDefault(require("cors"));
-dotenv_1.default.config();
 const app = (0, express_1.default)();
 const PORT = Number(process.env.PORT) || 3000;
 // Middleware
@@ -67,6 +66,8 @@ app.get('/', (req, res) => {
             auth: {
                 register: 'POST /api/register',
                 login: 'POST /api/login',
+                forgotPassword: 'POST /api/forgot-password',
+                resetPassword: 'POST /api/reset-password',
                 profile: 'GET /api/user/profile',
             },
             tasks: {

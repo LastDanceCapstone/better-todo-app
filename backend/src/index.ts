@@ -1,14 +1,12 @@
 // src/index.ts
+import 'dotenv/config';
 import express from 'express';
-import dotenv from 'dotenv';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './swagger';
 import authRoutes from './routes/auth';
 import taskRoutes from './routes/tasks';
 import aiRoutes from './routes/ai';
 import cors from 'cors';
-
-dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -73,6 +71,8 @@ app.get('/', (req, res) => {
       auth: {
         register: 'POST /api/register',
         login: 'POST /api/login',
+        forgotPassword: 'POST /api/forgot-password',
+        resetPassword: 'POST /api/reset-password',
         profile: 'GET /api/user/profile',
       },
       tasks: {

@@ -14,8 +14,16 @@ import HomeScreen from './src/screens/HomeScreen';
 import CreateTaskScreen from './src/screens/CreateTaskScreen';
 import TaskDetailsScreen from './src/screens/TaskDetailsScreen';
 import AccountDetailsScreen from './src/screens/AccountDetailsScreen';
+import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
 
-const RootStack = createNativeStackNavigator();
+type RootStackParamList = {
+  Login: undefined;
+  Main: any;
+  TaskDetails: any;
+  ResetPassword: { email?: string; token?: string } | undefined;
+};
+
+const RootStack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator();
 
 const CalendarPlaceholderScreen = () => {
@@ -173,6 +181,7 @@ const AppNavigator = () => {
         <RootStack.Screen name="Login" component={LoginScreen} />
         <RootStack.Screen name="Main" component={TabNavigator} />
         <RootStack.Screen name="TaskDetails" component={TaskDetailsScreen} />
+        <RootStack.Screen name="ResetPassword" component={ResetPasswordScreen} />
       </RootStack.Navigator>
     </NavigationContainer>
   );

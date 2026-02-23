@@ -48,9 +48,9 @@ const options = {
             id: { type: 'string', example: 'cm123abc456def' },
             title: { type: 'string', example: 'Complete project' },
             description: { type: 'string', example: 'Finish the todo app' },
-            status: { type: 'string', enum: ['ACTIVE', 'COMPLETED'], example: 'ACTIVE' },
-            priority: { type: 'string', enum: ['LOW', 'MEDIUM', 'HIGH'], example: 'HIGH' },
-            dueDate: { type: 'string', format: 'date-time', nullable: true },
+            status: { type: 'string', enum: ['TODO', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'], example: 'TODO' },
+            priority: { type: 'string', enum: ['LOW', 'MEDIUM', 'HIGH', 'URGENT'], example: 'HIGH' },
+            dueAt: { type: 'string', format: 'date-time', nullable: true, example: '2026-02-19T23:59:00.000Z' },
             userId: { type: 'string' },
             createdAt: { type: 'string', format: 'date-time' },
             subtasks: { type: 'array', items: { $ref: '#/components/schemas/Subtask' } },
@@ -76,6 +76,39 @@ const options = {
           type: 'object',
           properties: {
             error: { type: 'string', example: 'Parsed task output failed validation' },
+            issues: {
+              type: 'array',
+              items: { type: 'string' },
+              example: ['Missing required field: title'],
+            },
+          },
+        },
+        AIError: {
+          type: 'object',
+          required: ['error'],
+          properties: {
+            error: {
+              type: 'object',
+              required: ['code', 'message'],
+              properties: {
+                code: { type: 'string', example: 'BAD_REQUEST' },
+                message: { type: 'string', example: 'Invalid request payload' },
+              },
+            },
+          },
+        },
+        AIValidationError: {
+          type: 'object',
+          required: ['error', 'issues'],
+          properties: {
+            error: {
+              type: 'object',
+              required: ['code', 'message'],
+              properties: {
+                code: { type: 'string', example: 'PARSER_OUTPUT_VALIDATION_ERROR' },
+                message: { type: 'string', example: 'Parsed task output failed validation' },
+              },
+            },
             issues: {
               type: 'array',
               items: { type: 'string' },

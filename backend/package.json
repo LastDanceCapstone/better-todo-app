@@ -24,8 +24,10 @@
     "express": "^5.1.0",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
+    "resend": "^6.9.2",
     "swagger-jsdoc": "^6.2.8",
-    "swagger-ui-express": "^5.0.1"
+    "swagger-ui-express": "^5.0.1",
+    "undici": "^5.29.0"
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",
