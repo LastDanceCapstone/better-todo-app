@@ -15,6 +15,7 @@ import CreateTaskScreen from './src/screens/CreateTaskScreen';
 import TaskDetailsScreen from './src/screens/TaskDetailsScreen';
 import AccountDetailsScreen from './src/screens/AccountDetailsScreen';
 import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
+import AppleCalendarScreen from "./src/screens/AppleCalendarScreen";
 
 type RootStackParamList = {
   Login: undefined;
@@ -161,7 +162,7 @@ const TabNavigator = () => {
     >
       <Tab.Screen name="Home" component={HomeScreen} />
       <Tab.Screen name="Create" component={CreateTaskScreen} />
-      <Tab.Screen name="Calendar" component={CalendarPlaceholderScreen} />
+      <Tab.Screen name="Calendar" component={AppleCalendarScreen} />
       <Tab.Screen name="Account" component={AccountDetailsScreen} />
     </Tab.Navigator>
   );
