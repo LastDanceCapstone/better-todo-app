@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -70,7 +70,32 @@ const normalizeDate = (input: string): string | undefined => {
 const formatDateForDisplayLong = (date: Date): string =>
   date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
-export default function CreateTaskScreen({ navigation }: any) {
+const DATE_ONLY_ROUTE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+const resolvePrefillDate = (prefillDueAtIso?: string, prefillDateIso?: string): Date | null => {
+  if (prefillDueAtIso) {
+    const parsed = new Date(prefillDueAtIso);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+
+  if (prefillDateIso) {
+    if (DATE_ONLY_ROUTE_PATTERN.test(prefillDateIso)) {
+      const [year, month, day] = prefillDateIso.split('-').map(Number);
+      return new Date(year, month - 1, day, 23, 59, 0, 0);
+    }
+
+    const parsed = new Date(prefillDateIso);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+
+  return null;
+};
+
+export default function CreateTaskScreen({ navigation, route }: any) {
   const { colors } = useTheme();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -91,6 +116,7 @@ export default function CreateTaskScreen({ navigation }: any) {
   const [aiInput, setAiInput] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  const prefillKeyRef = useRef<string | null>(null);
   const modalOpacity = useRef(new Animated.Value(0)).current;
   const modalTranslateY = useRef(new Animated.Value(40)).current;
 
@@ -114,6 +140,7 @@ export default function CreateTaskScreen({ navigation }: any) {
 
     setAiLoading(false);
     setIsSubmitting(false);
+    prefillKeyRef.current = null;
 
     modalOpacity.setValue(0);
     modalTranslateY.setValue(40);
@@ -215,6 +242,26 @@ export default function CreateTaskScreen({ navigation }: any) {
     setSelectedDate(normalized);
     setDueDate(normalized.toISOString());
   };
+
+  useEffect(() => {
+    const prefillDueAtIso = route?.params?.prefillDueAtIso;
+    const prefillDateIso = route?.params?.prefillDateIso;
+
+    if (!prefillDueAtIso && !prefillDateIso) return;
+
+    const key = `${prefillDueAtIso ?? ''}|${prefillDateIso ?? ''}`;
+    if (prefillKeyRef.current === key) return;
+
+    const resolved = resolvePrefillDate(prefillDueAtIso, prefillDateIso);
+    if (!resolved) return;
+
+    commitDueDate(resolved);
+    prefillKeyRef.current = key;
+
+    if (typeof navigation?.setParams === 'function') {
+      navigation.setParams({ prefillDueAtIso: undefined, prefillDateIso: undefined });
+    }
+  }, [route?.params?.prefillDueAtIso, route?.params?.prefillDateIso, navigation]);
 
   const openAndroidTimePicker = (baseDate: Date) => {
     DateTimePickerAndroid.open({
@@ -881,15 +928,7 @@ export default function CreateTaskScreen({ navigation }: any) {
             ))}
 
             {/* Add Another Subtask Button */}
-            <TouchableOpacity
-              style={[styles.addSubtaskButton, { borderColor: colors.primary, backgroundColor: colors.primary + '10' }]}
-              onPress={addSubtaskInput}
-              disabled={isSubmitting}
-              activeOpacity={0.7}
-            >
-              <MaterialIcons name="add-circle-outline" size={20} color={colors.primary} />
-              <Text style={[styles.addSubtaskText, { color: colors.primary }]}>Add Another Subtask</Text>
-            </TouchableOpacity>
+            
           </View>
         )}
 
@@ -966,7 +1005,7 @@ export default function CreateTaskScreen({ navigation }: any) {
           style={styles.navItem}
           onPress={() => {
             setActiveNav('Calendar');
-            Alert.alert('Coming Soon', 'Calendar screen is not built yet');
+            navigation.navigate('Calendar');
           }}
           activeOpacity={0.7}
         >

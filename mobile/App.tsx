@@ -15,35 +15,19 @@ import CreateTaskScreen from './src/screens/CreateTaskScreen';
 import TaskDetailsScreen from './src/screens/TaskDetailsScreen';
 import AccountDetailsScreen from './src/screens/AccountDetailsScreen';
 import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
+import CalendarScreen from './src/screens/CalendarScreen';
+import CalendarSettingsScreen from './src/screens/CalendarSettingsScreen';
 
 type RootStackParamList = {
   Login: undefined;
   Main: any;
   TaskDetails: any;
   ResetPassword: { email?: string; token?: string } | undefined;
+  CalendarSync: undefined;
 };
 
 const RootStack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator();
-
-const CalendarPlaceholderScreen = () => {
-  const { colors } = useTheme();
-
-  return (
-    <View
-      style={{
-        flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 24,
-        backgroundColor: colors.background,
-      }}
-    >
-      <Text style={{ fontSize: 18, fontWeight: '600', color: colors.text }}>Calendar</Text>
-      <Text style={{ marginTop: 8, color: colors.mutedText }}>Coming soon</Text>
-    </View>
-  );
-};
 
 const AnimatedTabIcon = ({
   focused,
@@ -161,7 +145,7 @@ const TabNavigator = () => {
     >
       <Tab.Screen name="Home" component={HomeScreen} />
       <Tab.Screen name="Create" component={CreateTaskScreen} />
-      <Tab.Screen name="Calendar" component={CalendarPlaceholderScreen} />
+      <Tab.Screen name="Calendar" component={CalendarScreen} />
       <Tab.Screen name="Account" component={AccountDetailsScreen} />
     </Tab.Navigator>
   );
@@ -182,6 +166,7 @@ const AppNavigator = () => {
         <RootStack.Screen name="Main" component={TabNavigator} />
         <RootStack.Screen name="TaskDetails" component={TaskDetailsScreen} />
         <RootStack.Screen name="ResetPassword" component={ResetPasswordScreen} />
+        <RootStack.Screen name="CalendarSync" component={CalendarSettingsScreen} />
       </RootStack.Navigator>
     </NavigationContainer>
   );
