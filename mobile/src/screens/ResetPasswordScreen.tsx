@@ -1,4 +1,3 @@
-// src/screens/ResetPasswordScreen.tsx
 import React, { useState } from 'react';
 import {
   View,
@@ -14,11 +13,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../theme';
 
-// this is the API base URL for the backend server, make sure to update this if you change the backend server
 const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
 
 export default function ResetPasswordScreen({ route, navigation }: any) {
-  // this is the theme for the screen
   const { colors } = useTheme();
   const { email, token } = route.params || {};
   
@@ -203,7 +200,6 @@ export default function ResetPasswordScreen({ route, navigation }: any) {
   );
 }
 
-// this is the style for the screen
 const styles = StyleSheet.create({
   container: {
     flex: 1,

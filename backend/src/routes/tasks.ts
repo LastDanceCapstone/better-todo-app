@@ -5,6 +5,57 @@ import { prisma } from '../prisma';
 
 const router = Router();
 
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+const toLocalDefaultEndOfDayIso = (dateOnly: string): string => {
+  const [year, month, day] = dateOnly.split('-').map(Number);
+  const localDate = new Date(year, month - 1, day, 23, 59, 0, 0);
+  return localDate.toISOString();
+};
+
+const parseDueAtInput = (value: unknown): { valid: true; value: Date | null } | { valid: false; message: string } => {
+  if (value === undefined) {
+    return { valid: true, value: null };
+  }
+
+  if (value === null) {
+    return { valid: true, value: null };
+  }
+
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return { valid: false, message: 'Field "dueAt" must be a valid ISO date-time string or null' };
+  }
+
+  const trimmed = value.trim();
+  const normalized = DATE_ONLY_PATTERN.test(trimmed)
+    ? toLocalDefaultEndOfDayIso(trimmed)
+    : trimmed;
+
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) {
+    return { valid: false, message: 'Field "dueAt" must be a valid ISO date-time string or null' };
+  }
+
+  return { valid: true, value: parsed };
+};
+
+const serializeTask = (task: any) => ({
+  ...task,
+  dueAt: task.dueAt ? task.dueAt.toISOString() : null,
+  completedAt: task.completedAt ? task.completedAt.toISOString() : null,
+  statusChangedAt: task.statusChangedAt ? task.statusChangedAt.toISOString() : null,
+  createdAt: task.createdAt ? task.createdAt.toISOString() : null,
+  updatedAt: task.updatedAt ? task.updatedAt.toISOString() : null,
+  subtasks: Array.isArray(task.subtasks)
+    ? task.subtasks.map((subtask: any) => ({
+        ...subtask,
+        completedAt: subtask.completedAt ? subtask.completedAt.toISOString() : null,
+        createdAt: subtask.createdAt ? subtask.createdAt.toISOString() : null,
+        updatedAt: subtask.updatedAt ? subtask.updatedAt.toISOString() : null,
+      }))
+    : task.subtasks,
+});
+
 // Auth middleware
 const authenticateToken = (req: any, res: any, next: any) => {
   const authHeader = req.headers['authorization'];
@@ -61,7 +112,7 @@ router.get('/tasks', authenticateToken, async (req: any, res) => {
       orderBy: { createdAt: 'desc' },
     });
 
-    return res.json({ tasks });
+    return res.json({ tasks: tasks.map(serializeTask) });
   } catch (error) {
     console.error('Tasks error:', error);
     return res.status(500).json({ error: 'Internal server error' });
@@ -102,7 +153,7 @@ router.get('/tasks', authenticateToken, async (req: any, res) => {
  *               dueAt:
  *                 type: string
  *                 format: date-time
- *                 example: 2024-12-31T23:59:59Z
+ *                 example: 2026-02-19T23:59:00.000Z
  *     responses:
  *       201:
  *         description: Task created successfully
@@ -127,18 +178,27 @@ router.post('/tasks', authenticateToken, async (req: any, res) => {
 
     const { title, description, priority, status, dueAt } = req.body;
 
+    if (typeof title !== 'string' || title.trim().length === 0) {
+      return res.status(400).json({ error: 'Field "title" is required and must be a non-empty string' });
+    }
+
+    const parsedDueAt = parseDueAtInput(dueAt);
+    if (!parsedDueAt.valid) {
+      return res.status(400).json({ error: parsedDueAt.message });
+    }
+
     const task = await prisma.task.create({
       data: {
-        title,
+        title: title.trim(),
         description,
         priority: priority || 'MEDIUM',
-        dueAt: dueAt ? new Date(dueAt) : null,
+        dueAt: parsedDueAt.value,
         userId,
       },
       include: { subtasks: true },
     });
 
-    return res.status(201).json({ task });
+    return res.status(201).json({ task: serializeTask(task) });
   } catch (error) {
     console.error('Create task error:', error);
     return res.status(500).json({ error: 'Internal server error' });
@@ -230,7 +290,13 @@ router.patch('/tasks/:id', authenticateToken, async (req: any, res) => {
       updateData.status = status;
       updateData.statusChangedAt = new Date();
     }
-    if (dueAt !== undefined) updateData.dueAt = dueAt ? new Date(dueAt) : null;
+    if (dueAt !== undefined) {
+      const parsedDueAt = parseDueAtInput(dueAt);
+      if (!parsedDueAt.valid) {
+        return res.status(400).json({ error: parsedDueAt.message });
+      }
+      updateData.dueAt = parsedDueAt.value;
+    }
     if (completedAt !== undefined) updateData.completedAt = completedAt ? new Date(completedAt) : null;
 
     const task = await prisma.task.update({
@@ -239,7 +305,7 @@ router.patch('/tasks/:id', authenticateToken, async (req: any, res) => {
       include: { subtasks: true },
     });
 
-    return res.json({ task });
+    return res.json({ task: serializeTask(task) });
   } catch (error) {
     console.error('Update task error:', error);
     return res.status(500).json({ error: 'Internal server error' });

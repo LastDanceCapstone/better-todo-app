@@ -17,11 +17,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../theme';
 import { MaterialIcons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
-
-// Update the API base URL to match your current IP
-const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
+import { useFocusEffect } from '@react-navigation/native';
+import { API_BASE_URL, ApiError, createTask, getAuthToken, parseTask, type ParsedTaskResponse } from '../config/api';
+import { createEventForTask } from '../services/appleCalendar';
 
 type Priority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
 type Status = 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
@@ -50,14 +49,14 @@ const normalizeDate = (input: string): string | undefined => {
   const mdy = value.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
   if (mdy) {
     const [, m, d, y] = mdy;
-    const month = m.padStart(2, '0');
-    const day = d.padStart(2, '0');
-    return new Date(`${y}-${month}-${day}T23:59:59Z`).toISOString();
+    const localDate = new Date(Number(y), Number(m) - 1, Number(d), 23, 59, 0, 0);
+    return localDate.toISOString();
   }
 
   // YYYY-MM-DD format (convert to ISO)
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    return new Date(value + 'T23:59:59Z').toISOString();
+    const [year, month, day] = value.split('-').map(Number);
+    return new Date(year, month - 1, day, 23, 59, 0, 0).toISOString();
   }
 
   // Let JS try
@@ -87,42 +86,179 @@ export default function CreateTaskScreen({ navigation }: any) {
   const [activeNav, setActiveNav] = useState('Create');
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [selectedDate, setSelectedDate] = useState(new Date());
+  const [datePickerMode, setDatePickerMode] = useState<'date' | 'time'>('date');
   const [showStatusPicker, setShowStatusPicker] = useState(false);
+  const [showAiAssistModal, setShowAiAssistModal] = useState(false);
+  const [aiInput, setAiInput] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
   const modalOpacity = useRef(new Animated.Value(0)).current;
   const modalTranslateY = useRef(new Animated.Value(40)).current;
 
-  const onDateChange = (event: any, date?: Date) => {
-    if (event.type === 'set' && date) {
-      setSelectedDate(date);
-      setDueDate(date.toISOString());
+  const resetForm = React.useCallback(() => {
+    setTitle('');
+    setDescription('');
+    setPriority('MEDIUM');
+    setStatus('TODO');
+    setDueDate('');
+    setHasSubtasks(false);
+    setSubtaskInputs([{ id: `subtask-${Date.now()}`, title: '', description: '' }]);
+
+    setShowDatePicker(false);
+    setSelectedDate(new Date());
+    setDatePickerMode('date');
+    setShowStatusPicker(false);
+
+    setShowAiAssistModal(false);
+    setAiInput('');
+    setAiError(null);
+
+    setAiLoading(false);
+    setIsSubmitting(false);
+
+    modalOpacity.setValue(0);
+    modalTranslateY.setValue(40);
+  }, [modalOpacity, modalTranslateY]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      return () => {
+        resetForm();
+      };
+    }, [resetForm])
+  );
+
+  const mapPriority = (parsedPriority: ParsedTaskResponse['priority'], sourceText: string): Priority => {
+    if (!parsedPriority) return 'MEDIUM';
+    if (parsedPriority === 'HIGH' && /\burgent\b/i.test(sourceText)) {
+      return 'URGENT';
+    }
+    return parsedPriority;
+  };
+
+  const applyParsedSubtasks = (parsedSubtasks: string[] | null) => {
+    if (!parsedSubtasks || parsedSubtasks.length === 0) {
+      return;
     }
 
-    if (Platform.OS === 'android') {
-      setShowDatePicker(false);
+    setHasSubtasks(true);
+    setSubtaskInputs(
+      parsedSubtasks
+        .filter((subtask) => typeof subtask === 'string' && subtask.trim().length > 0)
+        .map((subtask, index) => ({
+          id: `ai-subtask-${Date.now()}-${index}`,
+          title: subtask.trim(),
+          description: '',
+        }))
+    );
+  };
+
+  const handleAiAssistParse = async () => {
+    if (!aiInput.trim()) {
+      setAiError('Please enter a task description first.');
+      return;
+    }
+
+    setAiLoading(true);
+    setAiError(null);
+
+    try {
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const parsed = await parseTask(aiInput.trim(), timezone);
+
+      setTitle(parsed.title ?? '');
+      setDescription(parsed.description ?? '');
+      setDueDate(parsed.dueDate ?? '');
+      setPriority(mapPriority(parsed.priority, aiInput));
+      applyParsedSubtasks(parsed.subtasks);
+
+      setShowAiAssistModal(false);
+      setAiInput('');
+      setAiError(null);
+    } catch (error: any) {
+      if (error instanceof ApiError) {
+        if (error.status === 422 && error.issues?.length) {
+          setAiError(`Could not parse task clearly:\n• ${error.issues.join('\n• ')}`);
+        } else {
+          setAiError(error.message);
+        }
+      } else {
+        setAiError('Failed to parse task. Please try again.');
+      }
+    } finally {
+      setAiLoading(false);
     }
   };
 
-  const openDatePicker = () => {
-    if (dueDate) {
-      const parsed = new Date(dueDate);
-      if (!isNaN(parsed.getTime())) {
-        setSelectedDate(parsed);
-      }
+  const onDateChange = (event: any, date?: Date) => {
+    if (Platform.OS !== 'ios') return;
+    if (event.type !== 'set' || !date) return;
+
+    const updatedDate = new Date(selectedDate);
+    if (datePickerMode === 'date') {
+      updatedDate.setFullYear(date.getFullYear(), date.getMonth(), date.getDate());
     } else {
-      setSelectedDate(new Date());
+      updatedDate.setHours(date.getHours(), date.getMinutes(), 0, 0);
     }
+
+    setSelectedDate(updatedDate);
+  };
+
+  const withDefaultTime = (date: Date): Date => {
+    const normalized = new Date(date);
+    normalized.setHours(23, 59, 0, 0);
+    return normalized;
+  };
+
+  const commitDueDate = (date: Date) => {
+    const normalized = new Date(date);
+    normalized.setSeconds(0, 0);
+    setSelectedDate(normalized);
+    setDueDate(normalized.toISOString());
+  };
+
+  const openAndroidTimePicker = (baseDate: Date) => {
+    DateTimePickerAndroid.open({
+      value: baseDate,
+      mode: 'time',
+      is24Hour: false,
+      onChange: (event, timeValue) => {
+        if (event.type === 'set' && timeValue) {
+          const withTime = new Date(baseDate);
+          withTime.setHours(timeValue.getHours(), timeValue.getMinutes(), 0, 0);
+          commitDueDate(withTime);
+          return;
+        }
+
+        commitDueDate(baseDate);
+      },
+    });
+  };
+
+  const openDatePicker = () => {
+    const parsedDueDate = dueDate ? new Date(dueDate) : new Date();
+    const baseDate = Number.isNaN(parsedDueDate.getTime()) ? new Date() : parsedDueDate;
+    const defaultedDate = withDefaultTime(baseDate);
+
+    setSelectedDate(defaultedDate);
 
     if (Platform.OS === 'android') {
       DateTimePickerAndroid.open({
-        value: dueDate ? new Date(dueDate) : new Date(),
+        value: defaultedDate,
         mode: 'date',
         display: 'calendar',
-        onChange: onDateChange,
+        onChange: (event, selectedDateValue) => {
+          if (event.type !== 'set' || !selectedDateValue) return;
+          const selectedWithDefaultTime = withDefaultTime(selectedDateValue);
+          setSelectedDate(selectedWithDefaultTime);
+          openAndroidTimePicker(selectedWithDefaultTime);
+        },
         minimumDate: new Date(),
       });
       return;
     }
 
+    setDatePickerMode('date');
     setShowDatePicker(true);
 
     if (Platform.OS === 'ios') {
@@ -142,29 +278,32 @@ export default function CreateTaskScreen({ navigation }: any) {
       Animated.parallel([
         Animated.timing(modalOpacity, { toValue: 0, duration: 180, useNativeDriver: true }),
         Animated.timing(modalTranslateY, { toValue: 40, duration: 180, useNativeDriver: true }),
-      ]).start(() => setShowDatePicker(false));
+      ]).start(() => {
+        setShowDatePicker(false);
+        setDatePickerMode('date');
+      });
       return;
     }
 
     setShowDatePicker(false);
+    setDatePickerMode('date');
   };
 
   const handleClearDate = () => {
     setDueDate('');
     setSelectedDate(new Date());
+    setDatePickerMode('date');
   };
 
   const handleToday = () => {
-    const today = new Date();
-    setSelectedDate(today);
-    setDueDate(today.toISOString());
+    const today = withDefaultTime(new Date());
+    commitDueDate(today);
   };
 
   const handleTomorrow = () => {
-    const tomorrow = new Date();
+    const tomorrow = withDefaultTime(new Date());
     tomorrow.setDate(tomorrow.getDate() + 1);
-    setSelectedDate(tomorrow);
-    setDueDate(tomorrow.toISOString());
+    commitDueDate(tomorrow);
   };
 
   // Add new subtask input with unique ID
@@ -230,8 +369,7 @@ export default function CreateTaskScreen({ navigation }: any) {
     setIsSubmitting(true);
 
     try {
-      // Get token from AsyncStorage
-      const token = await AsyncStorage.getItem('authToken');
+      const token = await getAuthToken();
       
       if (!token) {
         Alert.alert('Error', 'No authentication token found. Please log in again.');
@@ -251,95 +389,88 @@ export default function CreateTaskScreen({ navigation }: any) {
       };
 
       console.log('Creating task with data:', taskData);
-
-      // Create task via API
-      const response = await fetch(`${API_BASE_URL}/api/tasks`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(taskData),
-      });
-
-      const data = await response.json();
+      const data = await createTask(taskData);
       console.log('Task creation response:', data);
 
-      if (response.ok) {
-        const createdTask = data.task;
+      const createdTask = data.task;
 
-        // Create subtasks if enabled
-        if (hasSubtasks) {
-          const filledSubtasks = subtaskInputs.filter((st) => st.title.trim());
-          
-          console.log('Creating subtasks:', filledSubtasks);
-          
-          for (const subtask of filledSubtasks) {
-            try {
-              const subtaskData = {
-                title: subtask.title.trim(),
-                description: subtask.description?.trim() || undefined,
-                status: 'TODO',
-              };
+      // Sync task to device calendar when it has a due date
+      if (createdTask.dueAt) {
+        try {
+          await createEventForTask(createdTask.id, createdTask.title, createdTask.dueAt);
+        } catch (_) {
+          // Calendar permission or sync failure; task was still created
+        }
+      }
 
-              console.log('Sending subtask data:', subtaskData);
+      // Create subtasks if enabled
+      if (hasSubtasks) {
+        const filledSubtasks = subtaskInputs.filter((st) => st.title.trim());
+        
+        console.log('Creating subtasks:', filledSubtasks);
+        
+        for (const subtask of filledSubtasks) {
+          try {
+            const subtaskData = {
+              title: subtask.title.trim(),
+              description: subtask.description?.trim() || undefined,
+              status: 'TODO',
+            };
 
-              const subtaskResponse = await fetch(
-                `${API_BASE_URL}/api/tasks/${createdTask.id}/subtasks`,
-                {
-                  method: 'POST',
-                  headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json',
-                  },
-                  body: JSON.stringify(subtaskData),
-                }
-              );
+            console.log('Sending subtask data:', subtaskData);
 
-              if (!subtaskResponse.ok) {
-                const errorData = await subtaskResponse.json();
-                console.error('Failed to create subtask:', subtask.title, errorData);
-              } else {
-                const subtaskResponseData = await subtaskResponse.json();
-                console.log('Created subtask:', subtaskResponseData);
+            const subtaskResponse = await fetch(
+              `${API_BASE_URL}/api/tasks/${createdTask.id}/subtasks`,
+              {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${token}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(subtaskData),
               }
-            } catch (error) {
-              console.error('Error creating subtask:', error);
+            );
+
+            if (!subtaskResponse.ok) {
+              const errorData = await subtaskResponse.json();
+              console.error('Failed to create subtask:', subtask.title, errorData);
+            } else {
+              const subtaskResponseData = await subtaskResponse.json();
+              console.log('Created subtask:', subtaskResponseData);
             }
+          } catch (error) {
+            console.error('Error creating subtask:', error);
           }
         }
+      }
 
-        // Clear form
-        setTitle('');
-        setDescription('');
-        setPriority('MEDIUM');
-        setStatus('TODO');
-        setDueDate('');
-        setHasSubtasks(false);
-        setSubtaskInputs([{ id: `subtask-${Date.now()}`, title: '', description: '' }]);
-        
-        // Show success message
-        Alert.alert(
-          'Success',
-          hasSubtasks
-            ? 'Task created with subtasks!'
-            : 'Task created successfully!',
-          [
-            {
-              text: 'OK',
-              onPress: () => navigation.navigate('Home', { refresh: true }),
-            },
-          ]
-        );
-      } else {
-        if (response.status === 401) {
+      // Clear form
+      resetForm();
+      
+      // Show success message
+      Alert.alert(
+        'Success',
+        hasSubtasks
+          ? 'Task created with subtasks!'
+          : 'Task created successfully!',
+        [
+          {
+            text: 'OK',
+            onPress: () => navigation.navigate('Home', { refresh: true }),
+          },
+        ]
+      );
+    } catch (error) {
+      if (error instanceof ApiError) {
+        if (error.status === 401) {
           Alert.alert('Session Expired', 'Please log in again.');
           navigation.replace('Login');
         } else {
-          Alert.alert('Error', data.error || 'Failed to create task');
+          Alert.alert('Error', error.message || 'Failed to create task');
         }
+        return;
       }
-    } catch (error) {
+
       console.error('Error creating task:', error);
       Alert.alert('Error', 'Failed to create task. Please check your connection.');
     } finally {
@@ -362,6 +493,20 @@ export default function CreateTaskScreen({ navigation }: any) {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
+        <TouchableOpacity
+          style={[styles.aiAssistButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+          onPress={() => {
+            setShowAiAssistModal(true);
+            setAiError(null);
+          }}
+          activeOpacity={0.75}
+        >
+          <View style={[styles.aiAssistIconWrap, { backgroundColor: colors.primary + '1A' }]}>
+            <MaterialIcons name="auto-awesome" size={18} color={colors.primary} />
+          </View>
+          <Text style={[styles.aiAssistText, { color: colors.text }]}>AI Assist</Text>
+        </TouchableOpacity>
+
         {/* Title Field */}
         <View style={styles.field}>
           <Text style={[styles.label, { color: colors.text }]}>Task Title</Text>
@@ -407,7 +552,9 @@ export default function CreateTaskScreen({ navigation }: any) {
                 { color: dueDate ? colors.text : colors.mutedText },
               ]}
             >
-              {dueDate ? formatDateForDisplayLong(new Date(dueDate)) : 'Select a date'}
+              {dueDate
+                ? `${formatDateForDisplayLong(new Date(dueDate))} • ${new Date(dueDate).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+                : 'Select a date'}
             </Text>
             <MaterialIcons name="calendar-today" size={20} color={colors.mutedText} />
           </TouchableOpacity>
@@ -455,17 +602,28 @@ export default function CreateTaskScreen({ navigation }: any) {
                   <TouchableOpacity onPress={handleToday}>
                     <Text style={[styles.sheetActionText, { color: colors.primary }]}>Today</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity onPress={closeDatePicker}>
-                    <Text style={[styles.sheetActionText, { color: colors.primary }]}>Done</Text>
-                  </TouchableOpacity>
+                  {datePickerMode === 'date' ? (
+                    <TouchableOpacity onPress={() => setDatePickerMode('time')}>
+                      <Text style={[styles.sheetActionText, { color: colors.primary }]}>Next</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      onPress={() => {
+                        commitDueDate(selectedDate);
+                        closeDatePicker();
+                      }}
+                    >
+                      <Text style={[styles.sheetActionText, { color: colors.primary }]}>Done</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
                 <View style={styles.datePickerContainer}>
                   <DateTimePicker
                     value={selectedDate}
-                    mode="date"
+                    mode={datePickerMode}
                     display="spinner"
                     onChange={onDateChange}
-                    minimumDate={new Date()}
+                    minimumDate={datePickerMode === 'date' ? new Date() : undefined}
                     textColor={colors.text}
                     style={styles.datePicker}
                   />
@@ -474,6 +632,73 @@ export default function CreateTaskScreen({ navigation }: any) {
             </View>
           </Modal>
         )}
+
+        <Modal
+          transparent
+          animationType="fade"
+          visible={showAiAssistModal}
+          onRequestClose={() => setShowAiAssistModal(false)}
+        >
+          <View style={styles.modalRoot}>
+            <Pressable
+              onPress={() => setShowAiAssistModal(false)}
+              style={styles.modalBackdropPressable}
+            >
+              <View style={styles.modalBackdrop} />
+            </Pressable>
+
+            <View
+              style={[
+                styles.aiAssistModalCard,
+                { backgroundColor: colors.surface, borderColor: colors.border },
+              ]}
+            >
+              <Text style={[styles.aiAssistModalTitle, { color: colors.text }]}>AI Assist</Text>
+              <TextInput
+                style={[
+                  styles.aiAssistInput,
+                  {
+                    backgroundColor: colors.background,
+                    borderColor: colors.border,
+                    color: colors.text,
+                  },
+                ]}
+                placeholder="Describe your task naturally..."
+                placeholderTextColor={colors.mutedText}
+                multiline
+                value={aiInput}
+                onChangeText={setAiInput}
+                editable={!aiLoading}
+              />
+
+              {aiError ? <Text style={[styles.aiAssistError, { color: colors.danger }]}>{aiError}</Text> : null}
+
+              <View style={styles.aiAssistActions}>
+                <TouchableOpacity
+                  style={[styles.aiAssistSecondaryButton, { borderColor: colors.border }]}
+                  onPress={() => {
+                    setShowAiAssistModal(false);
+                    setAiError(null);
+                  }}
+                  disabled={aiLoading}
+                >
+                  <Text style={[styles.aiAssistSecondaryText, { color: colors.text }]}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.aiAssistPrimaryButton, { backgroundColor: colors.primary }]}
+                  onPress={handleAiAssistParse}
+                  disabled={aiLoading}
+                >
+                  {aiLoading ? (
+                    <ActivityIndicator size="small" color={colors.surface} />
+                  ) : (
+                    <Text style={[styles.aiAssistPrimaryText, { color: colors.surface }]}>Parse</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
 
         {/* Priority Field */}
         <View style={styles.field}>
@@ -832,6 +1057,83 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 20,
     paddingTop: 20,
+  },
+
+  // AI Assist
+  aiAssistButton: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  aiAssistIconWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  aiAssistText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  aiAssistModalCard: {
+    marginHorizontal: 20,
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 16,
+    marginBottom: 350,
+  },
+  aiAssistModalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 10,
+  },
+  aiAssistInput: {
+    borderWidth: 1,
+    borderRadius: 12,
+    minHeight: 100,
+    textAlignVertical: 'top',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+  },
+  aiAssistError: {
+    marginTop: 8,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  aiAssistActions: {
+    marginTop: 12,
+    flexDirection: 'row',
+    gap: 10,
+  },
+  aiAssistSecondaryButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+  },
+  aiAssistSecondaryText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  aiAssistPrimaryButton: {
+    flex: 1,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+  },
+  aiAssistPrimaryText: {
+    fontSize: 14,
+    fontWeight: '700',
   },
 
   // Form Fields

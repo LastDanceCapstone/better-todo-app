@@ -13,11 +13,13 @@ import {
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useTheme } from '../theme';
 
 
 const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
 
 export default function LoginScreen({ navigation }: any) {
+  const { colors } = useTheme();
   const [isLogin, setIsLogin] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
@@ -32,6 +34,72 @@ export default function LoginScreen({ navigation }: any) {
   const validateEmail = (email: string) => {
     const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return re.test(email);
+  };
+
+  const handleForgotPassword = async () => {
+    const email = formData.email.trim();
+
+    if (!email || !validateEmail(email)) {
+      Alert.alert('Error', 'Please enter your email first');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/forgot-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email }),
+      });
+
+      const contentType = response.headers.get('content-type') || '';
+      const isJson = contentType.includes('application/json');
+      const payload = isJson ? await response.json() : await response.text();
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          Alert.alert(
+            'Reset Endpoint Not Deployed',
+            'The backend at this URL does not have /api/forgot-password yet. You can continue to Reset Password and use a token from backend console.',
+            [
+              {
+                text: 'Continue',
+                onPress: () => navigation.navigate('ResetPassword', { email }),
+              },
+              { text: 'Cancel', style: 'cancel' },
+            ]
+          );
+          return;
+        }
+
+        const errorMessage =
+          isJson && payload?.error
+            ? payload.error
+            : `Failed to request reset token (Status ${response.status})`;
+
+        Alert.alert('Error', errorMessage);
+        return;
+      }
+
+      Alert.alert(
+        'Success',
+        'Check your email or backend console for the reset token',
+        [
+          {
+            text: 'OK',
+            onPress: () => navigation.navigate('ResetPassword', { email }),
+          },
+        ]
+      );
+    } catch (error: any) {
+      Alert.alert(
+        'Error',
+        error.message?.includes('Network')
+          ? 'Failed to connect. Please check your internet and try again.'
+          : 'Failed to request reset token'
+      );
+    }
   };
 
   const handleSubmit = async () => {
@@ -268,11 +336,8 @@ export default function LoginScreen({ navigation }: any) {
 
           {/* Forgot Password (Login only) */}
           {isLogin && (
-            <TouchableOpacity 
-              style={styles.forgotPassword}
-              onPress={() => navigation.navigate('ForgotPassword')}
-            >
-              <Text style={styles.forgotPasswordText}>Forgot password?</Text>
+            <TouchableOpacity style={styles.forgotPassword} onPress={handleForgotPassword}>
+              <Text style={[styles.forgotPasswordText, { color: colors.primary }]}>Forgot Password?</Text>
             </TouchableOpacity>
           )}
 

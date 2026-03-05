@@ -6,10 +6,47 @@ Object.defineProperty(exports, "__esModule", { value: true });
 // src/routes/auth.ts
 const express_1 = require("express");
 const bcrypt_1 = __importDefault(require("bcrypt"));
+const crypto_1 = __importDefault(require("crypto"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const crypto_1 = __importDefault(require("crypto"));
 const prisma_1 = require("../prisma");
+const email_1 = require("../utils/email");
 const router = (0, express_1.Router)();
+const FORGOT_PASSWORD_WINDOW_MS = 15 * 60 * 1000;
+const FORGOT_PASSWORD_MAX_REQUESTS = 5;
+const forgotPasswordIpBuckets = new Map();
+const forgotPasswordEmailBuckets = new Map();
+const pruneExpiredBuckets = (bucketMap, now) => {
+    for (const [key, bucket] of bucketMap.entries()) {
+        if (bucket.resetAt <= now) {
+            bucketMap.delete(key);
+        }
+    }
+};
+const consumeRateLimit = (bucketMap, key, now) => {
+    const current = bucketMap.get(key);
+    if (!current || current.resetAt <= now) {
+        const resetAt = now + FORGOT_PASSWORD_WINDOW_MS;
+        bucketMap.set(key, { count: 1, resetAt });
+        return { allowed: true, retryAfterSeconds: Math.ceil((resetAt - now) / 1000) };
+    }
+    current.count += 1;
+    bucketMap.set(key, current);
+    return {
+        allowed: current.count <= FORGOT_PASSWORD_MAX_REQUESTS,
+        retryAfterSeconds: Math.ceil((current.resetAt - now) / 1000),
+    };
+};
+const getClientIp = (req) => {
+    const forwardedFor = req.headers['x-forwarded-for'];
+    if (typeof forwardedFor === 'string' && forwardedFor.length > 0) {
+        return forwardedFor.split(',')[0].trim();
+    }
+    if (Array.isArray(forwardedFor) && forwardedFor.length > 0) {
+        return String(forwardedFor[0]);
+    }
+    return req.ip || req.socket?.remoteAddress || 'unknown';
+};
 // Auth middleware
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
@@ -182,6 +219,100 @@ router.post('/login', async (req, res) => {
     catch (error) {
         console.error('Login error:', error);
         res.status(500).json({ error: 'Internal server error' });
+    }
+});
+router.post('/forgot-password', async (req, res) => {
+    try {
+        const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+        const now = Date.now();
+        const ip = getClientIp(req);
+        const genericResponse = {
+            message: 'If an account exists, a reset email has been sent.',
+        };
+        pruneExpiredBuckets(forgotPasswordIpBuckets, now);
+        pruneExpiredBuckets(forgotPasswordEmailBuckets, now);
+        const ipLimitResult = consumeRateLimit(forgotPasswordIpBuckets, ip, now);
+        if (!ipLimitResult.allowed) {
+            res.setHeader('Retry-After', String(ipLimitResult.retryAfterSeconds));
+            return res.status(429).json({ error: 'Too many requests. Please try again later.' });
+        }
+        if (email) {
+            const emailLimitResult = consumeRateLimit(forgotPasswordEmailBuckets, email, now);
+            if (!emailLimitResult.allowed) {
+                res.setHeader('Retry-After', String(emailLimitResult.retryAfterSeconds));
+                return res.status(429).json({ error: 'Too many requests. Please try again later.' });
+            }
+        }
+        if (!email) {
+            return res.json(genericResponse);
+        }
+        const user = await prisma_1.prisma.user.findUnique({
+            where: { email },
+        });
+        if (user) {
+            const resetToken = crypto_1.default.randomBytes(32).toString('hex');
+            const tokenHash = crypto_1.default.createHash('sha256').update(resetToken).digest('hex');
+            const expiresAt = new Date(Date.now() + 1000 * 60 * 30);
+            await prisma_1.prisma.user.update({
+                where: { id: user.id },
+                data: {
+                    resetPasswordToken: tokenHash,
+                    resetPasswordExpiresAt: expiresAt,
+                },
+            });
+            try {
+                await (0, email_1.sendPasswordResetEmail)({
+                    to: email,
+                    token: resetToken,
+                });
+            }
+            catch (emailError) {
+                console.error('Failed to send password reset email:', emailError);
+            }
+        }
+        return res.json(genericResponse);
+    }
+    catch (error) {
+        console.error('Forgot password error:', error);
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+});
+router.post('/reset-password', async (req, res) => {
+    try {
+        const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+        const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
+        const tokenHash = token ? crypto_1.default.createHash('sha256').update(token).digest('hex') : '';
+        if (!token || !newPassword) {
+            return res.status(400).json({ error: 'Token and newPassword are required' });
+        }
+        if (newPassword.length < 6) {
+            return res.status(400).json({ error: 'Password must be at least 6 characters' });
+        }
+        const user = await prisma_1.prisma.user.findFirst({
+            where: {
+                resetPasswordToken: tokenHash,
+                resetPasswordExpiresAt: {
+                    gt: new Date(),
+                },
+            },
+        });
+        if (!user) {
+            return res.status(400).json({ error: 'Invalid or expired reset token' });
+        }
+        const hashedPassword = await bcrypt_1.default.hash(newPassword, 10);
+        await prisma_1.prisma.user.update({
+            where: { id: user.id },
+            data: {
+                password: hashedPassword,
+                resetPasswordToken: null,
+                resetPasswordExpiresAt: null,
+            },
+        });
+        return res.json({ message: 'Password reset successful' });
+    }
+    catch (error) {
+        console.error('Reset password error:', error);
+        return res.status(500).json({ error: 'Internal server error' });
     }
 });
 /**

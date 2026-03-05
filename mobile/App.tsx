@@ -4,7 +4,7 @@ import { Animated, Text, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 
 import { ThemeProvider, useThemePreference, useTheme } from './src/theme';
@@ -14,10 +14,17 @@ import HomeScreen from './src/screens/HomeScreen';
 import CreateTaskScreen from './src/screens/CreateTaskScreen';
 import TaskDetailsScreen from './src/screens/TaskDetailsScreen';
 import AccountDetailsScreen from './src/screens/AccountDetailsScreen';
-import ForgotPasswordScreen from './src/screens/ForgotPasswordScreen';
 import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
+import AppleCalendarScreen from "./src/screens/AppleCalendarScreen";
 
-const RootStack = createNativeStackNavigator();
+type RootStackParamList = {
+  Login: undefined;
+  Main: any;
+  TaskDetails: any;
+  ResetPassword: { email?: string; token?: string } | undefined;
+};
+
+const RootStack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator();
 
 const CalendarPlaceholderScreen = () => {
@@ -74,10 +81,12 @@ const AnimatedTabIcon = ({
   );
 };
 
+const TAB_BAR_HEIGHT = 62;
+const TAB_BAR_MARGIN = 12;
+
 const TabNavigator = () => {
   const { colors } = useTheme();
-  const { currentTheme } = useThemePreference();
-  const isDark = currentTheme === 'dark';
+  const insets = useSafeAreaInsets();
 
   const tabBarBackgroundColor = colors.surface;
   const tabBarBorderColor = colors.border;
@@ -87,8 +96,8 @@ const TabNavigator = () => {
       position: 'absolute' as const,
       left: 16,
       right: 16,
-      bottom: 12,
-      height: 62,
+      bottom: TAB_BAR_MARGIN + insets.bottom,
+      height: TAB_BAR_HEIGHT,
       borderRadius: 22,
       backgroundColor: tabBarBackgroundColor,
       borderWidth: 1,
@@ -99,7 +108,14 @@ const TabNavigator = () => {
       shadowRadius: 18,
       elevation: 14,
     }),
-    [tabBarBackgroundColor, tabBarBorderColor]
+    [tabBarBackgroundColor, tabBarBorderColor, insets.bottom]
+  );
+
+  const sceneContainerStyle = useMemo(
+    () => ({
+      paddingBottom: TAB_BAR_HEIGHT + TAB_BAR_MARGIN + insets.bottom + 8,
+    }),
+    [insets.bottom]
   );
 
   return (
@@ -108,6 +124,7 @@ const TabNavigator = () => {
         headerShown: false,
         tabBarHideOnKeyboard: true,
         tabBarStyle,
+        sceneContainerStyle,
         tabBarItemStyle: {
           paddingVertical: 8,
         },
@@ -155,7 +172,7 @@ const TabNavigator = () => {
     >
       <Tab.Screen name="Home" component={HomeScreen} />
       <Tab.Screen name="Create" component={CreateTaskScreen} />
-      <Tab.Screen name="Calendar" component={CalendarPlaceholderScreen} />
+      <Tab.Screen name="Calendar" component={AppleCalendarScreen} />
       <Tab.Screen name="Account" component={AccountDetailsScreen} />
     </Tab.Navigator>
   );
@@ -175,7 +192,6 @@ const AppNavigator = () => {
         <RootStack.Screen name="Login" component={LoginScreen} />
         <RootStack.Screen name="Main" component={TabNavigator} />
         <RootStack.Screen name="TaskDetails" component={TaskDetailsScreen} />
-        <RootStack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
         <RootStack.Screen name="ResetPassword" component={ResetPasswordScreen} />
       </RootStack.Navigator>
     </NavigationContainer>

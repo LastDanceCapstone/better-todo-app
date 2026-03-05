@@ -13,8 +13,8 @@ model User {
   lastName  String?
   email     String   @unique
   password  String
-  resetToken          String?
-  resetTokenExpiresAt DateTime?
+  resetPasswordToken     String?   @unique
+  resetPasswordExpiresAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   tasks     Task[]
