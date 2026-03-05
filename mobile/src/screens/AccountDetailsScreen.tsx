@@ -16,6 +16,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme, useThemePreference } from '../theme';
+import { useFocusEffect } from '@react-navigation/native';
 
 const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
 
@@ -47,6 +48,12 @@ export default function AccountDetailsScreen({ navigation }: any) {
     loadAvatar();
     requestPermissions();
   }, []);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      fetchUserProfile();
+    }, [])
+  );
 
   const loadAvatar = async () => {
     try {
@@ -280,24 +287,30 @@ export default function AccountDetailsScreen({ navigation }: any) {
     );
   };
 
+  const openEditProfile = () => {
+    if (user) {
+      (navigation as any).navigate('EditProfile', { user });
+    }
+  };
+
   const settingRows: SettingRow[] = [
     {
       id: 'account',
       icon: 'person',
       label: 'Account',
-      onPress: () => console.log('TODO: Navigate to Account settings'),
+      onPress: openEditProfile,
     },
     {
       id: 'general',
       icon: 'settings',
       label: 'General',
-      onPress: () => console.log('TODO: Navigate to General settings'),
+      onPress: () => Alert.alert('Coming soon', 'General settings are not available yet.'),
     },
     {
       id: 'calendar',
       icon: 'calendar-today',
       label: 'Calendar',
-      onPress: () => console.log('TODO: Navigate to Calendar settings'),
+      onPress: () => Alert.alert('Coming soon', 'Calendar settings are not available yet.'),
     },
     {
       id: 'theme',
@@ -310,7 +323,7 @@ export default function AccountDetailsScreen({ navigation }: any) {
       id: 'notifications',
       icon: 'notifications',
       label: 'Notifications',
-      onPress: () => console.log('TODO: Navigate to Notifications settings'),
+      onPress: () => Alert.alert('Coming soon', 'Notifications settings are not available yet.'),
     },
   ];
 
