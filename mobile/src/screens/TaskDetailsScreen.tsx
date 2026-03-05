@@ -21,7 +21,20 @@ import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/d
 import { useTheme } from '../theme';
 import { updateTask } from '../config/api';
 
+import { updateEventForTask, deleteEventForTask } from '../services/appleCalendar';
+
 const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
+
+async function syncCalendarForTask(task: { id: string; title: string; dueAt?: string | null; status?: string }) {
+  try {
+    const active = task.status !== 'COMPLETED' && task.status !== 'CANCELLED';
+    if (task.dueAt && active) {
+      await updateEventForTask(task.id, task.title, task.dueAt);
+    } else {
+      await deleteEventForTask(task.id);
+    }
+  } catch (_) {}
+}
 
 type Subtask = {
   id: string;
@@ -475,6 +488,7 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
       if (response.ok) {
         const data = await response.json();
         setTask(data.task);
+        syncCalendarForTask(data.task);
         Alert.alert('Success', `Task marked as ${newStatus.toLowerCase()}`);
       } else {
         const errorData = await response.json();
@@ -521,6 +535,7 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
               });
 
               if (response.ok) {
+                deleteEventForTask(task.id).catch(() => {});
                 Alert.alert('Success', 'Task deleted successfully', [
                   {
                     text: 'OK',

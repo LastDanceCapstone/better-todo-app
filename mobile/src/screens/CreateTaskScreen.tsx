@@ -20,6 +20,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { useFocusEffect } from '@react-navigation/native';
 import { API_BASE_URL, ApiError, createTask, getAuthToken, parseTask, type ParsedTaskResponse } from '../config/api';
+import { createEventForTask } from '../services/appleCalendar';
 
 type Priority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
 type Status = 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
@@ -439,6 +440,15 @@ export default function CreateTaskScreen({ navigation, route }: any) {
       console.log('Task creation response:', data);
 
       const createdTask = data.task;
+
+      // Sync task to device calendar when it has a due date
+      if (createdTask.dueAt) {
+        try {
+          await createEventForTask(createdTask.id, createdTask.title, createdTask.dueAt);
+        } catch (_) {
+          // Calendar permission or sync failure; task was still created
+        }
+      }
 
       // Create subtasks if enabled
       if (hasSubtasks) {
