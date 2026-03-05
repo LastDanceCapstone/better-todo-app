@@ -15,9 +15,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
+import * as Calendar from 'expo-calendar';
+import { useFocusEffect } from '@react-navigation/native';
 import { useTheme, useThemePreference } from '../theme';
 
 const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
+const APP_CALENDAR_STORAGE_KEY = 'prioritizeCalendarAppId';
 
 interface UserProfile {
   id: string;
@@ -41,12 +44,41 @@ export default function AccountDetailsScreen({ navigation }: any) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
+  const [calendarSyncOn, setCalendarSyncOn] = useState(false);
 
   useEffect(() => {
     fetchUserProfile();
     loadAvatar();
     requestPermissions();
   }, []);
+
+  const loadCalendarSyncStatus = async () => {
+    try {
+      const permission = await Calendar.getCalendarPermissionsAsync();
+      if (permission.status !== 'granted') {
+        setCalendarSyncOn(false);
+        return;
+      }
+
+      const savedCalendarId = await AsyncStorage.getItem(APP_CALENDAR_STORAGE_KEY);
+      const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
+
+      const hasPrioritizeCalendar = calendars.some((calendar) => calendar.title === 'Prioritize');
+      const hasSavedCalendar = savedCalendarId
+        ? calendars.some((calendar) => calendar.id === savedCalendarId)
+        : false;
+
+      setCalendarSyncOn(hasPrioritizeCalendar || hasSavedCalendar);
+    } catch {
+      setCalendarSyncOn(false);
+    }
+  };
+
+  useFocusEffect(
+    React.useCallback(() => {
+      loadCalendarSyncStatus();
+    }, [])
+  );
 
   const loadAvatar = async () => {
     try {
@@ -297,7 +329,7 @@ export default function AccountDetailsScreen({ navigation }: any) {
       id: 'calendar',
       icon: 'calendar-today',
       label: 'Calendar',
-      onPress: () => console.log('TODO: Navigate to Calendar settings'),
+      onPress: () => navigation.navigate('CalendarSync'),
     },
     {
       id: 'theme',
@@ -418,6 +450,7 @@ export default function AccountDetailsScreen({ navigation }: any) {
             ))}
           </View>
         </View>
+
 
         {/* Logout Button */}
         <TouchableOpacity
@@ -638,5 +671,15 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FF4D4D',
     marginLeft: 8,
+  },
+  manageBtn: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  manageBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
 });

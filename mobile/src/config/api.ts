@@ -19,6 +19,43 @@ export type CreateTaskPayload = {
 	dueAt?: string;
 };
 
+export type UpdateTaskPayload = {
+	title?: string;
+	description?: string;
+	priority?: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+	status?: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+	dueAt?: string | null;
+	completedAt?: string | null;
+};
+
+export type TaskStatus = 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+
+export type Subtask = {
+	id: string;
+	title: string;
+	description?: string;
+	status: TaskStatus;
+	completedAt?: string | null;
+	createdAt: string;
+	updatedAt: string;
+	taskId: string;
+};
+
+export type Task = {
+	id: string;
+	title: string;
+	description?: string;
+	dueAt?: string | null;
+	completedAt?: string | null;
+	statusChangedAt?: string | null;
+	status: TaskStatus;
+	priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+	createdAt: string;
+	updatedAt: string;
+	userId: string;
+	subtasks?: Subtask[];
+};
+
 export class ApiError extends Error {
 	status: number;
 	code?: string;
@@ -109,6 +146,80 @@ export async function createTask(payload: CreateTaskPayload): Promise<any> {
 	}
 
 	return responsePayload;
+}
+
+export async function getTasks(): Promise<Task[]> {
+	const token = await getAuthToken();
+	if (!token) {
+		throw new ApiError('No authentication token found. Please log in again.', 401, 'UNAUTHORIZED');
+	}
+
+	const response = await fetch(`${API_BASE_URL}/api/tasks`, {
+		method: 'GET',
+		headers: {
+			Authorization: `Bearer ${token}`,
+			'Content-Type': 'application/json',
+		},
+	});
+
+	const responsePayload = await response.json();
+
+	if (!response.ok) {
+		const details = extractApiErrorDetails(responsePayload);
+		throw new ApiError(details.message, response.status, details.code, details.issues);
+	}
+
+	return Array.isArray(responsePayload?.tasks) ? responsePayload.tasks : [];
+}
+
+export async function deleteTaskById(taskId: string): Promise<void> {
+	const token = await getAuthToken();
+	if (!token) {
+		throw new ApiError('No authentication token found. Please log in again.', 401, 'UNAUTHORIZED');
+	}
+
+	const response = await fetch(`${API_BASE_URL}/api/tasks/${taskId}`, {
+		method: 'DELETE',
+		headers: {
+			Authorization: `Bearer ${token}`,
+		},
+	});
+
+	if (!response.ok) {
+		let payload: any = null;
+		try {
+			payload = await response.json();
+		} catch {
+			payload = null;
+		}
+		const details = extractApiErrorDetails(payload);
+		throw new ApiError(details.message, response.status, details.code, details.issues);
+	}
+}
+
+export async function updateTask(taskId: string, payload: UpdateTaskPayload): Promise<Task> {
+	const token = await getAuthToken();
+	if (!token) {
+		throw new ApiError('No authentication token found. Please log in again.', 401, 'UNAUTHORIZED');
+	}
+
+	const response = await fetch(`${API_BASE_URL}/api/tasks/${taskId}`, {
+		method: 'PATCH',
+		headers: {
+			Authorization: `Bearer ${token}`,
+			'Content-Type': 'application/json',
+		},
+		body: JSON.stringify(payload),
+	});
+
+	const responsePayload = await response.json();
+
+	if (!response.ok) {
+		const details = extractApiErrorDetails(responsePayload);
+		throw new ApiError(details.message, response.status, details.code, details.issues);
+	}
+
+	return responsePayload?.task as Task;
 }
 
 export default API_BASE_URL;
