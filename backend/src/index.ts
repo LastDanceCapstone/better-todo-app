@@ -6,6 +6,7 @@ import { swaggerSpec } from './swagger';
 import authRoutes from './routes/auth';
 import taskRoutes from './routes/tasks';
 import cors from 'cors';
+import { errorHandler } from './middleware/errorHandler';
 
 dotenv.config();
 
@@ -15,6 +16,8 @@ const PORT = Number(process.env.PORT) || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use("/api", authRoutes);
+app.use(errorHandler);
 
 
 // Debug: Log what's in the swagger spec

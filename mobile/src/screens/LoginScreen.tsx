@@ -15,7 +15,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 
-const API_BASE_URL = 'http://100.100.66.131:3000';
+const API_BASE_URL = 'http://localhost:3000'; //http://100.100.66.131:3000'; changed for local testing
 
 export default function LoginScreen({ navigation }: any) {
   const [isLogin, setIsLogin] = useState(true);
@@ -101,30 +101,34 @@ export default function LoginScreen({ navigation }: any) {
       console.log('Response ok:', response.ok);
 
       const data = await response.json();
-      console.log('Response data:', data);
+console.log('Response data:', data);
 
-      if (response.ok) {
-        // Store token and user data locally
-        await AsyncStorage.setItem('authToken', data.token);
-        await AsyncStorage.setItem('user', JSON.stringify(data.user));
+if (data.success) {
 
-        Alert.alert(
-          'Success',
-          isLogin ? 'Login successful!' : 'Registration successful!',
-          [
-            {
-              text: 'OK',
-              onPress: () => navigation.replace('Home', { 
-                email: formData.email,
-                token: data.token,
-                user: data.user 
-              })
-            }
-          ]
-        );
-      } else {
-        Alert.alert('Error', data.error || 'Something went wrong');
+  const token = data.data.token;
+  const user = data.data.user;
+
+  // Store token and user data locally
+  await AsyncStorage.setItem('authToken', token);
+  await AsyncStorage.setItem('user', JSON.stringify(user));
+
+  Alert.alert(
+    'Success',
+    isLogin ? 'Login successful!' : 'Registration successful!',
+    [
+      {
+        text: 'OK',
+        onPress: () => navigation.replace('Home', { 
+          email: formData.email,
+          token: token,
+          user: user
+        })
       }
+    ]
+  );
+} else {
+  Alert.alert('Error', data.error || 'Something went wrong');
+}
     } catch (error: any) {
       console.error('Network error details:', error);
       console.error('Error name:', error.name);

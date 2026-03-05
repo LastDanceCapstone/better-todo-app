@@ -3,6 +3,7 @@ import { Router } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../prisma';
+import { AppError } from '../utils/AppError';
 
 const router = Router();
 
@@ -11,13 +12,15 @@ const authenticateToken = (req: any, res: any, next: any) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
-  if (!token) {
-    return res.status(401).json({ error: 'Access token required' });
-  }
+
+
+if (!token) {
+  throw new AppError('Access token required', 401);
+}
 
   jwt.verify(token, process.env.JWT_SECRET!, (err: any, user: any) => {
     if (err) {
-      return res.status(403).json({ error: 'Invalid or expired token' });
+      throw new AppError('Invalid or expired token', 403);
     }
     req.user = user;
     next();
@@ -74,7 +77,7 @@ const authenticateToken = (req: any, res: any, next: any) => {
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.post('/register', async (req, res) => {
+router.post('/register', async (req, res, next) => {
   try {
     const { firstName, lastName, email, password } = req.body;
 
@@ -83,7 +86,7 @@ router.post('/register', async (req, res) => {
     });
 
     if (existingUser) {
-      return res.status(400).json({ error: 'User already exists with this email' });
+      throw new AppError('User already exists with this email', 400);
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -104,18 +107,20 @@ router.post('/register', async (req, res) => {
     );
 
     res.status(201).json({
-      message: 'User created successfully',
-      token,
-      user: {
-        id: user.id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-      },
+      success: true,
+      data: {
+        token,
+        user: {
+          id: user.id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+        }
+      }
     });
+
   } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    next(error);
   }
 });
 
@@ -163,7 +168,7 @@ router.post('/register', async (req, res) => {
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.post('/login', async (req, res) => {
+router.post('/login', async (req, res, next) => {
   try {
     const { email, password } = req.body;
 
@@ -172,12 +177,12 @@ router.post('/login', async (req, res) => {
     });
 
     if (!user) {
-      return res.status(401).json({ error: 'Invalid email or password' });
+      throw new AppError('Invalid credentials', 401);
     }
 
     const isValidPassword = await bcrypt.compare(password, user.password);
     if (!isValidPassword) {
-      return res.status(401).json({ error: 'Invalid email or password' });
+      throw new AppError('Invalid credentials', 401);
     }
 
     const token = jwt.sign(
@@ -187,18 +192,20 @@ router.post('/login', async (req, res) => {
     );
 
     res.json({
-      message: 'Login successful',
-      token,
-      user: {
-        id: user.id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-      },
+      success: true,
+      data: {
+        token,
+        user: {
+          id: user.id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+        }
+      }
     });
+
   } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    next(error);
   }
 });
 
@@ -227,7 +234,7 @@ router.post('/login', async (req, res) => {
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.get('/user/profile', authenticateToken, async (req: any, res) => {
+router.get('/user/profile', authenticateToken, async (req: any, res, next) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.user.userId },
@@ -241,13 +248,16 @@ router.get('/user/profile', authenticateToken, async (req: any, res) => {
     });
 
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      throw new AppError('User not found', 404);
     }
 
-    res.json({ user });
+    res.json({
+      success: true,
+      data: user
+    });
+
   } catch (error) {
-    console.error('Profile error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    next(error);
   }
 });
 
