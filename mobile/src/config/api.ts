@@ -1,6 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+	reconcileCalendarSync,
+	removeTaskFromCalendar,
+	syncTaskToCalendar,
+} from '../services/calendarSync';
 
 export const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
+const APP_CALENDAR_SYNC_ENABLED_KEY = 'prioritizeCalendarAppSyncEnabled';
 
 export type ParsedTaskResponse = {
 	title: string | null;
@@ -98,6 +104,22 @@ export async function getAuthToken(): Promise<string | null> {
 	return AsyncStorage.getItem('authToken');
 }
 
+async function isCalendarSyncEnabled(): Promise<boolean> {
+	return (await AsyncStorage.getItem(APP_CALENDAR_SYNC_ENABLED_KEY)) === 'true';
+}
+
+async function runBestEffortCalendarSync(label: string, job: () => Promise<void>): Promise<void> {
+	if (!(await isCalendarSyncEnabled())) {
+		return;
+	}
+
+	try {
+		await job();
+	} catch (error) {
+		console.error('[CalendarSync] ' + label + ' failed:', error);
+	}
+}
+
 export async function parseTask(text: string, timezone?: string): Promise<ParsedTaskResponse> {
 	const token = await getAuthToken();
 	if (!token) {
@@ -145,6 +167,13 @@ export async function createTask(payload: CreateTaskPayload): Promise<any> {
 		throw new ApiError(details.message, response.status, details.code, details.issues);
 	}
 
+	// Best-effort auto sync hook after successful create.
+	if (responsePayload?.task?.id) {
+		void runBestEffortCalendarSync('create task', async () => {
+			await syncTaskToCalendar(responsePayload.task as Task);
+		});
+	}
+
 	return responsePayload;
 }
 
@@ -169,7 +198,14 @@ export async function getTasks(): Promise<Task[]> {
 		throw new ApiError(details.message, response.status, details.code, details.issues);
 	}
 
-	return Array.isArray(responsePayload?.tasks) ? responsePayload.tasks : [];
+	const tasks = Array.isArray(responsePayload?.tasks) ? responsePayload.tasks : [];
+
+	// Best-effort reconcile hook on task list load.
+	void runBestEffortCalendarSync('reconcile tasks', async () => {
+		await reconcileCalendarSync(tasks);
+	});
+
+	return tasks;
 }
 
 export async function deleteTaskById(taskId: string): Promise<void> {
@@ -195,6 +231,11 @@ export async function deleteTaskById(taskId: string): Promise<void> {
 		const details = extractApiErrorDetails(payload);
 		throw new ApiError(details.message, response.status, details.code, details.issues);
 	}
+
+	// Best-effort cleanup hook after successful delete.
+	void runBestEffortCalendarSync('delete task', async () => {
+		await removeTaskFromCalendar(taskId);
+	});
 }
 
 export async function updateTask(taskId: string, payload: UpdateTaskPayload): Promise<Task> {
@@ -219,7 +260,16 @@ export async function updateTask(taskId: string, payload: UpdateTaskPayload): Pr
 		throw new ApiError(details.message, response.status, details.code, details.issues);
 	}
 
-	return responsePayload?.task as Task;
+	const updatedTask = responsePayload?.task as Task;
+
+	// Best-effort auto sync hook after successful update.
+	if (updatedTask?.id) {
+		void runBestEffortCalendarSync('update task', async () => {
+			await syncTaskToCalendar(updatedTask);
+		});
+	}
+
+	return updatedTask;
 }
 
 export default API_BASE_URL;

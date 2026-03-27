@@ -19,7 +19,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { useTheme } from '../theme';
-import { updateTask } from '../config/api';
+import { deleteTaskById, updateTask } from '../config/api';
 
 const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
 
@@ -353,24 +353,12 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
         return;
       }
 
-      // Update main task
-      const response = await fetch(`${API_BASE_URL}/api/tasks/${task.id}`, {
-        method: 'PATCH',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          title: editTitle,
-          description: editDescription,
-          priority: editPriority,
-        }),
+      // Use shared update helper so sync hooks stay centralized.
+      await updateTask(task.id, {
+        title: editTitle,
+        description: editDescription,
+        priority: editPriority,
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to update task');
-      }
 
       // Update or delete existing subtasks
       for (const subtask of editSubtasks) {
@@ -453,33 +441,12 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
 
     try {
       setLoading(true);
-      const token = await AsyncStorage.getItem('authToken');
-      
-      if (!token) {
-        Alert.alert('Error', 'No authentication token found');
-        return;
-      }
-
       const newStatus = task.status === 'COMPLETED' ? 'TODO' : 'COMPLETED';
       const completedAt = newStatus === 'COMPLETED' ? new Date().toISOString() : undefined;
 
-      const response = await fetch(`${API_BASE_URL}/api/tasks/${task.id}`, {
-        method: 'PATCH',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ status: newStatus, completedAt }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setTask(data.task);
-        Alert.alert('Success', `Task marked as ${newStatus.toLowerCase()}`);
-      } else {
-        const errorData = await response.json();
-        Alert.alert('Error', errorData.error || 'Failed to update task');
-      }
+      const updated = await updateTask(task.id, { status: newStatus, completedAt });
+      setTask(updated as Task);
+      Alert.alert('Success', `Task marked as ${newStatus.toLowerCase()}`);
     } catch (error) {
       console.error('Error toggling task status:', error);
       Alert.alert('Error', 'Failed to update task status');
@@ -506,31 +473,14 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
           onPress: async () => {
             try {
               setLoading(true);
-              const token = await AsyncStorage.getItem('authToken');
-              
-              if (!token) {
-                Alert.alert('Error', 'No authentication token found');
-                return;
-              }
-
-              const response = await fetch(`${API_BASE_URL}/api/tasks/${task.id}`, {
-                method: 'DELETE',
-                headers: {
-                  'Authorization': `Bearer ${token}`,
+              // Use shared delete helper so sync hooks stay centralized.
+              await deleteTaskById(task.id);
+              Alert.alert('Success', 'Task deleted successfully', [
+                {
+                  text: 'OK',
+                  onPress: () => navigation.goBack(),
                 },
-              });
-
-              if (response.ok) {
-                Alert.alert('Success', 'Task deleted successfully', [
-                  {
-                    text: 'OK',
-                    onPress: () => navigation.goBack(),
-                  },
-                ]);
-              } else {
-                const errorData = await response.json();
-                Alert.alert('Error', errorData.error || 'Failed to delete task');
-              }
+              ]);
             } catch (error) {
               console.error('Error deleting task:', error);
               Alert.alert('Error', 'Failed to delete task');

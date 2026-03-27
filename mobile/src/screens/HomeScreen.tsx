@@ -7,7 +7,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import SwipeableTaskCard from '../components/SwipeableTaskCard';
-import { API_BASE_URL, getAuthToken } from '../config/api';
+import { getTasks, updateTask } from '../config/api';
 
 type Task = {
   id: string;
@@ -89,42 +89,8 @@ export default function HomeScreen({ route, navigation }: any) {
   const fetchTasks = async () => {
     try {
       setLoading(true);
-      
-      // Get token from AsyncStorage
-      const token = await getAuthToken();
-      
-      if (!token) {
-        Alert.alert('Error', 'No authentication token found. Please log in again.');
-        return;
-      }
-
-      console.log('Fetching tasks with token:', token.substring(0, 20) + '...');
-
-      const response = await fetch(`${API_BASE_URL}/api/tasks`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
-
-      console.log('Tasks response status:', response.status);
-
-      if (response.ok) {
-        const data = await response.json();
-        console.log('Tasks data received:', data);
-        setTasks(data.tasks || []);
-      } else {
-        const errorData = await response.json();
-        console.error('Tasks fetch error:', errorData);
-        
-        if (response.status === 401) {
-          Alert.alert('Session Expired', 'Please log in again.');
-          // Could navigate back to login here
-        } else {
-          Alert.alert('Error', errorData.error || 'Failed to load tasks');
-        }
-      }
+      const fetchedTasks = await getTasks();
+      setTasks(fetchedTasks);
     } catch (error) {
       console.error('Network error fetching tasks:', error);
       Alert.alert('Error', 'Failed to load tasks. Please check your connection.');
@@ -136,40 +102,20 @@ export default function HomeScreen({ route, navigation }: any) {
   // Handle status change
   const handleStatusChange = async (taskId: string, newStatus: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED') => {
     try {
-      const token = await getAuthToken();
-      
-      if (!token) {
-        Alert.alert('Error', 'No authentication token found');
-        return;
-      }
-
       const completedAt = newStatus === 'COMPLETED' ? new Date().toISOString() : null;
+      // Use shared update helper so sync hooks stay centralized.
+      await updateTask(taskId, { status: newStatus, completedAt });
 
-      const response = await fetch(`${API_BASE_URL}/api/tasks/${taskId}`, {
-        method: 'PATCH',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ status: newStatus, completedAt }),
-      });
+      setTasks(prevTasks =>
+        prevTasks.map(task =>
+          task.id === taskId ? { ...task, status: newStatus, completedAt: completedAt || undefined } : task
+        )
+      );
 
-      if (response.ok) {
-        // Update local state
-        setTasks(prevTasks =>
-          prevTasks.map(task =>
-            task.id === taskId ? { ...task, status: newStatus, completedAt: completedAt || undefined } : task
-          )
-        );
-        
-        Alert.alert(
-          'Success',
-          `Task ${newStatus === 'COMPLETED' ? 'completed' : 'updated'} successfully!`
-        );
-      } else {
-        const errorData = await response.json();
-        Alert.alert('Error', errorData.error || 'Failed to update task');
-      }
+      Alert.alert(
+        'Success',
+        `Task ${newStatus === 'COMPLETED' ? 'completed' : 'updated'} successfully!`
+      );
     } catch (error) {
       console.error('Error updating task status:', error);
       Alert.alert('Error', 'Failed to update task status');

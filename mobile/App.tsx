@@ -1,11 +1,12 @@
 // App.tsx
-import React, { useEffect, useMemo, useRef } from 'react';
-import { Animated, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Animated, AppState, AppStateStatus, Text, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { ThemeProvider, useThemePreference, useTheme } from './src/theme';
 
@@ -17,6 +18,10 @@ import AccountDetailsScreen from './src/screens/AccountDetailsScreen';
 import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
 import CalendarScreen from './src/screens/CalendarScreen';
 import CalendarSettingsScreen from './src/screens/CalendarSettingsScreen';
+import { getTasks } from './src/config/api';
+
+const APP_CALENDAR_SYNC_ENABLED_KEY = 'prioritizeCalendarAppSyncEnabled';
+const CALENDAR_RECONCILE_INTERVAL_MS = 5 * 60 * 1000;
 
 type RootStackParamList = {
   Login: undefined;
@@ -153,11 +158,116 @@ const TabNavigator = () => {
 
 const AppNavigator = () => {
   const { navigationTheme } = useThemePreference();
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [initialRouteName, setInitialRouteName] = useState<'Login' | 'Main'>('Login');
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  const reconcileIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const reconcileInFlightRef = useRef(false);
+
+  useEffect(() => {
+    const bootstrapSession = async () => {
+      try {
+        const token = await AsyncStorage.getItem('authToken');
+        if (token) {
+          // Use shared task loader so reconcile can run on app launch when enabled.
+          await getTasks();
+          setInitialRouteName('Main');
+        } else {
+          setInitialRouteName('Login');
+        }
+      } catch (error) {
+        console.error('Failed to restore auth session:', error);
+        await AsyncStorage.multiRemove(['authToken', 'user']);
+        setInitialRouteName('Login');
+      } finally {
+        setIsBootstrapping(false);
+      }
+    };
+
+    bootstrapSession();
+  }, []);
+
+  useEffect(() => {
+    if (isBootstrapping || initialRouteName !== 'Main') {
+      if (reconcileIntervalRef.current) {
+        clearInterval(reconcileIntervalRef.current);
+        reconcileIntervalRef.current = null;
+      }
+      return;
+    }
+
+    const runPeriodicReconcile = async () => {
+      if (appStateRef.current !== 'active') return;
+      if (reconcileInFlightRef.current) return;
+
+      reconcileInFlightRef.current = true;
+      try {
+        const enabled = (await AsyncStorage.getItem(APP_CALENDAR_SYNC_ENABLED_KEY)) === 'true';
+        if (!enabled) return;
+
+        const token = await AsyncStorage.getItem('authToken');
+        if (!token) return;
+
+        // Lightweight periodic refresh; getTasks triggers reconcile via shared API hooks.
+        await getTasks();
+      } catch (error) {
+        console.error('[CalendarSync] Periodic reconcile failed:', error);
+      } finally {
+        reconcileInFlightRef.current = false;
+      }
+    };
+
+    const startIntervalIfNeeded = () => {
+      if (reconcileIntervalRef.current || appStateRef.current !== 'active') return;
+      reconcileIntervalRef.current = setInterval(() => {
+        void runPeriodicReconcile();
+      }, CALENDAR_RECONCILE_INTERVAL_MS);
+    };
+
+    const stopInterval = () => {
+      if (!reconcileIntervalRef.current) return;
+      clearInterval(reconcileIntervalRef.current);
+      reconcileIntervalRef.current = null;
+    };
+
+    const appStateSubscription = AppState.addEventListener('change', (nextState) => {
+      appStateRef.current = nextState;
+      if (nextState === 'active') {
+        startIntervalIfNeeded();
+        void runPeriodicReconcile();
+      } else {
+        stopInterval();
+      }
+    });
+
+    startIntervalIfNeeded();
+    void runPeriodicReconcile();
+
+    return () => {
+      appStateSubscription.remove();
+      stopInterval();
+    };
+  }, [isBootstrapping, initialRouteName]);
+
+  if (isBootstrapping) {
+    return (
+      <View
+        style={{
+          flex: 1,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: navigationTheme.colors.background,
+        }}
+      >
+        <ActivityIndicator size="large" color={navigationTheme.colors.primary} />
+      </View>
+    );
+  }
 
   return (
     <NavigationContainer theme={navigationTheme}>
       <RootStack.Navigator
-        initialRouteName="Login"
+        initialRouteName={initialRouteName}
         screenOptions={{
           headerShown: false,
         }}

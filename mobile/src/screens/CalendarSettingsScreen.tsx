@@ -1,6 +1,5 @@
 import React, { useCallback, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   ScrollView,
   StyleSheet,
@@ -15,36 +14,13 @@ import * as Calendar from 'expo-calendar';
 import { useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '../theme';
 import {
-  addEventToPrioritizeCalendar,
   getOrCreatePrioritizeCalendarId,
   listUpcomingPrioritizeEvents,
   requestCalendarPermission,
 } from '../services/calendarApp';
-import { getTasks, type Task } from '../config/api';
 
 const APP_CALENDAR_STORAGE_KEY = 'prioritizeCalendarAppId';
 const APP_CALENDAR_SYNC_ENABLED_KEY = 'prioritizeCalendarAppSyncEnabled';
-
-function buildTaskEvent(task: Task) {
-  if (!task.dueAt) return null;
-
-  const start = new Date(task.dueAt);
-  if (Number.isNaN(start.getTime())) return null;
-
-  const end = new Date(start);
-  end.setMinutes(end.getMinutes() + 45);
-
-  return {
-    title: task.title,
-    notes: 'Synced from Prioritize',
-    startDate: start,
-    endDate: end,
-  };
-}
-
-function buildEventFingerprint(title: string, startDate: Date, endDate: Date) {
-  return `${title}::${startDate.getTime()}::${endDate.getTime()}`;
-}
 
 export default function CalendarSettingsScreen({ navigation }: any) {
   const { colors } = useTheme();
@@ -157,50 +133,6 @@ export default function CalendarSettingsScreen({ navigation }: any) {
     }
   };
 
-  const handleExportTasks = async () => {
-    try {
-      setSyncing(true);
-
-      const ok = await requestCalendarPermission();
-      if (!ok) {
-        Alert.alert('Permission needed', 'Allow Calendar access to sync tasks.');
-        return;
-      }
-
-      const calendarId = await getOrCreatePrioritizeCalendarId();
-      await AsyncStorage.setItem(APP_CALENDAR_STORAGE_KEY, calendarId);
-
-      const [tasks, existingEvents] = await Promise.all([
-        getTasks(),
-        listUpcomingPrioritizeEvents(120),
-      ]);
-
-      const existingSet = new Set(
-        existingEvents.map((event) => buildEventFingerprint(event.title, event.startDate, event.endDate))
-      );
-
-      let exported = 0;
-      for (const task of tasks) {
-        const event = buildTaskEvent(task);
-        if (!event) continue;
-
-        const fingerprint = buildEventFingerprint(event.title, event.startDate, event.endDate);
-        if (existingSet.has(fingerprint)) continue;
-
-        await addEventToPrioritizeCalendar(event);
-        exported += 1;
-        existingSet.add(fingerprint);
-      }
-
-      Alert.alert('Sync complete', `Exported ${exported} task(s) to Apple Calendar.`);
-      await loadStatus();
-    } catch (error: any) {
-      Alert.alert('Sync failed', error?.message ?? 'Failed to export tasks.');
-    } finally {
-      setSyncing(false);
-    }
-  };
-
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}> 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -225,8 +157,16 @@ export default function CalendarSettingsScreen({ navigation }: any) {
             <View style={{ flex: 1 }}>
               <Text style={[styles.statusTitle, { color: colors.text }]}>Apple Calendar Sync</Text>
               <Text style={[styles.statusSubtitle, { color: colors.mutedText }]}> 
-                {connected ? `On • ${syncedCount} upcoming event(s)` : 'Off • Export tasks to Apple Calendar'}
+                {connected ? 'Automatic sync is on' : 'Automatic sync is off'}
               </Text>
+              <Text style={[styles.statusDetail, { color: colors.mutedText }]}> 
+                Tasks with due dates will sync to Apple Calendar.
+              </Text>
+              {connected ? (
+                <Text style={[styles.statusMeta, { color: colors.mutedText }]}> 
+                  {`${syncedCount} upcoming synced event(s)`}
+                </Text>
+              ) : null}
             </View>
             <TouchableOpacity
               style={[
@@ -253,20 +193,8 @@ export default function CalendarSettingsScreen({ navigation }: any) {
               disabled={syncing || loading}
             >
               <Text style={[styles.secondaryText, { color: colors.text }]}>
-                {connected ? 'Reconnect' : 'Connect'}
+                {syncing ? 'Updating...' : connected ? 'Reconnect' : 'Connect'}
               </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.primaryButton, { backgroundColor: colors.primary }]}
-              onPress={handleExportTasks}
-              disabled={syncing || loading}
-            >
-              {syncing ? (
-                <ActivityIndicator size="small" color="white" />
-              ) : (
-                <Text style={styles.primaryText}>Export Tasks</Text>
-              )}
             </TouchableOpacity>
           </View>
 
@@ -352,6 +280,15 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontSize: 13,
   },
+  statusDetail: {
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  statusMeta: {
+    marginTop: 4,
+    fontSize: 12,
+  },
   pill: {
     borderWidth: 1,
     borderRadius: 999,
@@ -378,18 +315,6 @@ const styles = StyleSheet.create({
   secondaryText: {
     fontSize: 14,
     fontWeight: '600',
-  },
-  primaryButton: {
-    flex: 1,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-  },
-  primaryText: {
-    color: 'white',
-    fontSize: 14,
-    fontWeight: '700',
   },
   permissionHint: {
     marginTop: 10,

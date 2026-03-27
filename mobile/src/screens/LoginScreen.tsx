@@ -14,9 +14,8 @@ import {
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../theme';
-
-
-const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
+import { API_BASE_URL } from '../config/api';
+import { getGoogleErrorMessage, signInWithGoogle } from '../config/googleSignIn';
 
 export default function LoginScreen({ navigation }: any) {
   const { colors } = useTheme();
@@ -30,6 +29,28 @@ export default function LoginScreen({ navigation }: any) {
     confirmPassword: ''
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
+  const isAuthBusy = isSubmitting || isGoogleSubmitting;
+
+  const completeAuthSuccess = async (data: any, successMessage: string) => {
+    await AsyncStorage.setItem('authToken', data.token);
+    await AsyncStorage.setItem('user', JSON.stringify(data.user));
+
+    Alert.alert('Success', successMessage, [
+      {
+        text: 'OK',
+        onPress: () =>
+          navigation.replace('Main', {
+            screen: 'Home',
+            params: {
+              email: data.user?.email,
+              token: data.token,
+              user: data.user,
+            },
+          }),
+      },
+    ]);
+  };
 
   const validateEmail = (email: string) => {
     const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -103,6 +124,10 @@ export default function LoginScreen({ navigation }: any) {
   };
 
   const handleSubmit = async () => {
+    if (isSubmitting || isGoogleSubmitting) {
+      return;
+    }
+
     // Validation
     if (!formData.email || !validateEmail(formData.email)) {
       Alert.alert('Error', 'Please enter a valid email');
@@ -172,28 +197,7 @@ export default function LoginScreen({ navigation }: any) {
       console.log('Response data:', data);
 
       if (response.ok) {
-        // Store token and user data locally
-        await AsyncStorage.setItem('authToken', data.token);
-        await AsyncStorage.setItem('user', JSON.stringify(data.user));
-
-        Alert.alert(
-          'Success',
-          isLogin ? 'Login successful!' : 'Registration successful!',
-          [
-            {
-              text: 'OK',
-              onPress: () =>
-                navigation.replace('Main', {
-                  screen: 'Home',
-                  params: {
-                    email: formData.email,
-                    token: data.token,
-                    user: data.user,
-                  },
-                })
-            }
-          ]
-        );
+        await completeAuthSuccess(data, isLogin ? 'Login successful!' : 'Registration successful!');
       } else {
         Alert.alert('Error', data.error || 'Something went wrong');
       }
@@ -222,6 +226,59 @@ export default function LoginScreen({ navigation }: any) {
       }
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleGoogleContinue = async () => {
+    if (isSubmitting || isGoogleSubmitting) {
+      return;
+    }
+
+    setIsGoogleSubmitting(true);
+
+    try {
+      // Replaced expo-auth-session browser OAuth with native SDK on iOS to avoid
+      // redirect URI failures and ensure stable token retrieval in dev builds.
+      const { idToken } = await signInWithGoogle();
+
+      const response = await fetch(`${API_BASE_URL}/api/auth/google`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ idToken }),
+      });
+
+      console.log('[Google Auth] status:', response.status);
+      console.log('[Google Auth] content-type:', response.headers.get('content-type'));
+
+      const rawText = await response.text();
+
+      // Attempt JSON parse — backend may return HTML on 404/500 pages.
+      let data: any = null;
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        console.error('[Google Auth] Non-JSON response received:', rawText.slice(0, 500));
+        Alert.alert('Google Sign-In Failed', 'Server error. Please try again later.');
+        return;
+      }
+
+      if (!response.ok) {
+        const message =
+          typeof data?.error === 'string' && data.error.length > 0
+            ? data.error
+            : `Unable to authenticate with Google (HTTP ${response.status}).`;
+        console.error('[Google Auth] Error response:', data);
+        Alert.alert('Google Sign-In Failed', message);
+        return;
+      }
+
+      await completeAuthSuccess(data, 'Login successful!');
+    } catch (error: any) {
+      Alert.alert('Google Sign-In Failed', getGoogleErrorMessage(error));
+    } finally {
+      setIsGoogleSubmitting(false);
     }
   };
 
@@ -343,9 +400,9 @@ export default function LoginScreen({ navigation }: any) {
 
           {/* Submit Button */}
           <TouchableOpacity
-            style={styles.submitButton}
+            style={[styles.submitButton, { opacity: isAuthBusy ? 0.7 : 1 }]}
             onPress={handleSubmit}
-            disabled={isSubmitting}
+            disabled={isAuthBusy}
           >
             {isSubmitting ? (
               <ActivityIndicator color="#FFFFFF" />
@@ -356,13 +413,43 @@ export default function LoginScreen({ navigation }: any) {
             )}
           </TouchableOpacity>
 
+          <>
+            <View style={styles.dividerRow}>
+              <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+              <Text style={[styles.dividerText, { color: colors.mutedText }]}>or</Text>
+              <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+            </View>
+
+            <TouchableOpacity
+              style={[
+                styles.googleButton,
+                {
+                  borderColor: colors.border,
+                  backgroundColor: colors.surface,
+                  opacity: isAuthBusy ? 0.65 : 1,
+                },
+              ]}
+              onPress={handleGoogleContinue}
+              disabled={isAuthBusy}
+            >
+              {isGoogleSubmitting ? (
+                <ActivityIndicator color={colors.text} />
+              ) : (
+                <>
+                  <MaterialIcons name="g-translate" size={20} color={colors.text} />
+                  <Text style={[styles.googleButtonText, { color: colors.text }]}>Continue with Google</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </>
+
           {/* Toggle Login/Register */}
           <View style={styles.toggleContainer}>
             <Text style={styles.toggleText}>
               {isLogin ? "Don't have an account? " : 'Already have an account? '}
             </Text>
             <TouchableOpacity onPress={() => setIsLogin(!isLogin)}>
-              <Text style={styles.toggleLink}>
+              <Text style={[styles.toggleLink, { color: colors.primary }]}>
                 {isLogin ? 'Sign Up' : 'Sign In'}
               </Text>
             </TouchableOpacity>
@@ -500,6 +587,40 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#E5E7EB',
+  },
+  dividerText: {
+    marginHorizontal: 10,
+    color: '#6B7280',
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+  },
+  googleButton: {
+    marginTop: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#FFFFFF',
+    padding: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  googleButtonText: {
+    color: '#111827',
+    fontSize: 16,
+    fontWeight: '700',
   },
   toggleContainer: {
     flexDirection: 'row',

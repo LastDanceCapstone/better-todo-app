@@ -76,6 +76,12 @@ export async function getOrCreatePrioritizeCalendarId(): Promise<string> {
   return newCalendarId;
 }
 
+export async function getPrioritizeCalendarIdIfExists(): Promise<string | null> {
+  const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
+  const existing = calendars.find((c: { title?: string; id?: string }) => c.title === APP_CALENDAR_TITLE);
+  return existing?.id ?? null;
+}
+
 export async function addEventToPrioritizeCalendar(
   input: AppCalendarEventInput
 ): Promise<string> {
