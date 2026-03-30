@@ -13,11 +13,12 @@ import {
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
-
-const API_BASE_URL = 'http://localhost:3000'; //http://100.100.66.131:3000'; changed for local testing
+import { useTheme } from '../theme';
+import { API_BASE_URL } from '../config/api';
+import { getGoogleErrorMessage, signInWithGoogle } from '../config/googleSignIn';
 
 export default function LoginScreen({ navigation }: any) {
+  const { colors } = useTheme();
   const [isLogin, setIsLogin] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
@@ -28,13 +29,105 @@ export default function LoginScreen({ navigation }: any) {
     confirmPassword: ''
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
+  const isAuthBusy = isSubmitting || isGoogleSubmitting;
+
+  const completeAuthSuccess = async (data: any, successMessage: string) => {
+    await AsyncStorage.setItem('authToken', data.token);
+    await AsyncStorage.setItem('user', JSON.stringify(data.user));
+
+    Alert.alert('Success', successMessage, [
+      {
+        text: 'OK',
+        onPress: () =>
+          navigation.replace('Main', {
+            screen: 'Home',
+            params: {
+              email: data.user?.email,
+              token: data.token,
+              user: data.user,
+            },
+          }),
+      },
+    ]);
+  };
 
   const validateEmail = (email: string) => {
     const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return re.test(email);
   };
 
+  const handleForgotPassword = async () => {
+    const email = formData.email.trim();
+
+    if (!email || !validateEmail(email)) {
+      Alert.alert('Error', 'Please enter your email first');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/forgot-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email }),
+      });
+
+      const contentType = response.headers.get('content-type') || '';
+      const isJson = contentType.includes('application/json');
+      const payload = isJson ? await response.json() : await response.text();
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          Alert.alert(
+            'Reset Endpoint Not Deployed',
+            'The backend at this URL does not have /api/forgot-password yet. You can continue to Reset Password and use a token from backend console.',
+            [
+              {
+                text: 'Continue',
+                onPress: () => navigation.navigate('ResetPassword', { email }),
+              },
+              { text: 'Cancel', style: 'cancel' },
+            ]
+          );
+          return;
+        }
+
+        const errorMessage =
+          isJson && payload?.error
+            ? payload.error
+            : `Failed to request reset token (Status ${response.status})`;
+
+        Alert.alert('Error', errorMessage);
+        return;
+      }
+
+      Alert.alert(
+        'Success',
+        'Check your email or backend console for the reset token',
+        [
+          {
+            text: 'OK',
+            onPress: () => navigation.navigate('ResetPassword', { email }),
+          },
+        ]
+      );
+    } catch (error: any) {
+      Alert.alert(
+        'Error',
+        error.message?.includes('Network')
+          ? 'Failed to connect. Please check your internet and try again.'
+          : 'Failed to request reset token'
+      );
+    }
+  };
+
   const handleSubmit = async () => {
+    if (isSubmitting || isGoogleSubmitting) {
+      return;
+    }
+
     // Validation
     if (!formData.email || !validateEmail(formData.email)) {
       Alert.alert('Error', 'Please enter a valid email');
@@ -103,26 +196,10 @@ export default function LoginScreen({ navigation }: any) {
       const data = await response.json();
 console.log('Response data:', data);
 
-if (data.success) {
-
-  const token = data.data.token;
-  const user = data.data.user;
-
-  // Store token and user data locally
-  await AsyncStorage.setItem('authToken', token);
-  await AsyncStorage.setItem('user', JSON.stringify(user));
-
-  Alert.alert(
-    'Success',
-    isLogin ? 'Login successful!' : 'Registration successful!',
-    [
-      {
-        text: 'OK',
-        onPress: () => navigation.replace('Home', { 
-          email: formData.email,
-          token: token,
-          user: user
-        })
+      if (response.ok) {
+        await completeAuthSuccess(data, isLogin ? 'Login successful!' : 'Registration successful!');
+      } else {
+        Alert.alert('Error', data.error || 'Something went wrong');
       }
     ]
   );
@@ -154,6 +231,59 @@ if (data.success) {
       }
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleGoogleContinue = async () => {
+    if (isSubmitting || isGoogleSubmitting) {
+      return;
+    }
+
+    setIsGoogleSubmitting(true);
+
+    try {
+      // Replaced expo-auth-session browser OAuth with native SDK on iOS to avoid
+      // redirect URI failures and ensure stable token retrieval in dev builds.
+      const { idToken } = await signInWithGoogle();
+
+      const response = await fetch(`${API_BASE_URL}/api/auth/google`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ idToken }),
+      });
+
+      console.log('[Google Auth] status:', response.status);
+      console.log('[Google Auth] content-type:', response.headers.get('content-type'));
+
+      const rawText = await response.text();
+
+      // Attempt JSON parse — backend may return HTML on 404/500 pages.
+      let data: any = null;
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        console.error('[Google Auth] Non-JSON response received:', rawText.slice(0, 500));
+        Alert.alert('Google Sign-In Failed', 'Server error. Please try again later.');
+        return;
+      }
+
+      if (!response.ok) {
+        const message =
+          typeof data?.error === 'string' && data.error.length > 0
+            ? data.error
+            : `Unable to authenticate with Google (HTTP ${response.status}).`;
+        console.error('[Google Auth] Error response:', data);
+        Alert.alert('Google Sign-In Failed', message);
+        return;
+      }
+
+      await completeAuthSuccess(data, 'Login successful!');
+    } catch (error: any) {
+      Alert.alert('Google Sign-In Failed', getGoogleErrorMessage(error));
+    } finally {
+      setIsGoogleSubmitting(false);
     }
   };
 
@@ -268,16 +398,16 @@ if (data.success) {
 
           {/* Forgot Password (Login only) */}
           {isLogin && (
-            <TouchableOpacity style={styles.forgotPassword}>
-              <Text style={styles.forgotPasswordText}>Forgot password?</Text>
+            <TouchableOpacity style={styles.forgotPassword} onPress={handleForgotPassword}>
+              <Text style={[styles.forgotPasswordText, { color: colors.primary }]}>Forgot Password?</Text>
             </TouchableOpacity>
           )}
 
           {/* Submit Button */}
           <TouchableOpacity
-            style={styles.submitButton}
+            style={[styles.submitButton, { opacity: isAuthBusy ? 0.7 : 1 }]}
             onPress={handleSubmit}
-            disabled={isSubmitting}
+            disabled={isAuthBusy}
           >
             {isSubmitting ? (
               <ActivityIndicator color="#FFFFFF" />
@@ -288,13 +418,43 @@ if (data.success) {
             )}
           </TouchableOpacity>
 
+          <>
+            <View style={styles.dividerRow}>
+              <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+              <Text style={[styles.dividerText, { color: colors.mutedText }]}>or</Text>
+              <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+            </View>
+
+            <TouchableOpacity
+              style={[
+                styles.googleButton,
+                {
+                  borderColor: colors.border,
+                  backgroundColor: colors.surface,
+                  opacity: isAuthBusy ? 0.65 : 1,
+                },
+              ]}
+              onPress={handleGoogleContinue}
+              disabled={isAuthBusy}
+            >
+              {isGoogleSubmitting ? (
+                <ActivityIndicator color={colors.text} />
+              ) : (
+                <>
+                  <MaterialIcons name="g-translate" size={20} color={colors.text} />
+                  <Text style={[styles.googleButtonText, { color: colors.text }]}>Continue with Google</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </>
+
           {/* Toggle Login/Register */}
           <View style={styles.toggleContainer}>
             <Text style={styles.toggleText}>
               {isLogin ? "Don't have an account? " : 'Already have an account? '}
             </Text>
             <TouchableOpacity onPress={() => setIsLogin(!isLogin)}>
-              <Text style={styles.toggleLink}>
+              <Text style={[styles.toggleLink, { color: colors.primary }]}>
                 {isLogin ? 'Sign Up' : 'Sign In'}
               </Text>
             </TouchableOpacity>
@@ -432,6 +592,40 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#E5E7EB',
+  },
+  dividerText: {
+    marginHorizontal: 10,
+    color: '#6B7280',
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+  },
+  googleButton: {
+    marginTop: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#FFFFFF',
+    padding: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  googleButtonText: {
+    color: '#111827',
+    fontSize: 16,
+    fontWeight: '700',
   },
   toggleContainer: {
     flexDirection: 'row',

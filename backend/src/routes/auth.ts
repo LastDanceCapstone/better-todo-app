@@ -1,11 +1,94 @@
 // src/routes/auth.ts
 import { Router } from 'express';
 import bcrypt from 'bcrypt';
+import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
+import { OAuth2Client } from 'google-auth-library';
 import { prisma } from '../prisma';
-import { AppError } from '../utils/AppError';
+import { sendPasswordResetEmail } from '../utils/email';
 
 const router = Router();
+
+const FORGOT_PASSWORD_WINDOW_MS = 15 * 60 * 1000;
+const FORGOT_PASSWORD_MAX_REQUESTS = 5;
+const GOOGLE_ISSUERS = new Set(['accounts.google.com', 'https://accounts.google.com']);
+
+type AuthResponseUser = {
+  id: string;
+  firstName: string | null;
+  lastName: string | null;
+  email: string;
+};
+
+type RateLimitBucket = {
+  count: number;
+  resetAt: number;
+};
+
+const forgotPasswordIpBuckets = new Map<string, RateLimitBucket>();
+const forgotPasswordEmailBuckets = new Map<string, RateLimitBucket>();
+const googleClient = new OAuth2Client();
+
+const createSessionToken = (userId: string, email: string) => {
+  return jwt.sign(
+    { userId, email },
+    process.env.JWT_SECRET!,
+    { expiresIn: '24h' }
+  );
+};
+
+const buildAuthResponse = (user: AuthResponseUser, token: string, message = 'Login successful') => {
+  return {
+    message,
+    token,
+    user: {
+      id: user.id,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      email: user.email,
+    },
+  };
+};
+
+const pruneExpiredBuckets = (bucketMap: Map<string, RateLimitBucket>, now: number) => {
+  for (const [key, bucket] of bucketMap.entries()) {
+    if (bucket.resetAt <= now) {
+      bucketMap.delete(key);
+    }
+  }
+};
+
+const consumeRateLimit = (bucketMap: Map<string, RateLimitBucket>, key: string, now: number) => {
+  const current = bucketMap.get(key);
+
+  if (!current || current.resetAt <= now) {
+    const resetAt = now + FORGOT_PASSWORD_WINDOW_MS;
+    bucketMap.set(key, { count: 1, resetAt });
+    return { allowed: true, retryAfterSeconds: Math.ceil((resetAt - now) / 1000) };
+  }
+
+  current.count += 1;
+  bucketMap.set(key, current);
+
+  return {
+    allowed: current.count <= FORGOT_PASSWORD_MAX_REQUESTS,
+    retryAfterSeconds: Math.ceil((current.resetAt - now) / 1000),
+  };
+};
+
+const getClientIp = (req: any): string => {
+  const forwardedFor = req.headers['x-forwarded-for'];
+
+  if (typeof forwardedFor === 'string' && forwardedFor.length > 0) {
+    return forwardedFor.split(',')[0].trim();
+  }
+
+  if (Array.isArray(forwardedFor) && forwardedFor.length > 0) {
+    return String(forwardedFor[0]);
+  }
+
+  return req.ip || req.socket?.remoteAddress || 'unknown';
+};
 
 // Auth middleware
 const authenticateToken = (req: any, res: any, next: any) => {
@@ -100,25 +183,9 @@ router.post('/register', async (req, res, next) => {
       },
     });
 
-    const token = jwt.sign(
-      { userId: user.id, email: user.email },
-      process.env.JWT_SECRET!,
-      { expiresIn: '24h' }
-    );
+    const token = createSessionToken(user.id, user.email);
 
-    res.status(201).json({
-      success: true,
-      data: {
-        token,
-        user: {
-          id: user.id,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          email: user.email,
-        }
-      }
-    });
-
+    res.status(201).json(buildAuthResponse(user, token, 'User created successfully'));
   } catch (error) {
     next(error);
   }
@@ -180,32 +247,263 @@ router.post('/login', async (req, res, next) => {
       throw new AppError('Invalid credentials', 401);
     }
 
+    if (!user.password) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
     const isValidPassword = await bcrypt.compare(password, user.password);
     if (!isValidPassword) {
       throw new AppError('Invalid credentials', 401);
     }
 
-    const token = jwt.sign(
-      { userId: user.id, email: user.email },
-      process.env.JWT_SECRET!,
-      { expiresIn: '24h' }
-    );
+    const token = createSessionToken(user.id, user.email);
 
-    res.json({
-      success: true,
-      data: {
-        token,
-        user: {
-          id: user.id,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          email: user.email,
-        }
-      }
-    });
-
+    res.json(buildAuthResponse(user, token));
   } catch (error) {
     next(error);
+  }
+});
+
+/**
+ * @swagger
+ * /auth/google:
+ *   post:
+ *     tags: [Authentication]
+ *     summary: Sign in or sign up with Google
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - idToken
+ *             properties:
+ *               idToken:
+ *                 type: string
+ *                 description: Google ID token from client sign-in flow
+ *     responses:
+ *       200:
+ *         description: Login successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                 token:
+ *                   type: string
+ *                 user:
+ *                   $ref: '#/components/schemas/User'
+ *       400:
+ *         description: Missing token
+ *       401:
+ *         description: Invalid token or unverified email
+ */
+router.post('/auth/google', async (req, res) => {
+  console.log('Google auth route hit');
+  try {
+    const idToken = typeof req.body?.idToken === 'string' ? req.body.idToken.trim() : '';
+
+    if (!idToken) {
+      return res.status(400).json({ error: 'idToken is required' });
+    }
+
+    const googleClientId = process.env.GOOGLE_CLIENT_ID;
+    if (!googleClientId) {
+      console.error('GOOGLE_CLIENT_ID is not configured');
+      return res.status(500).json({ error: 'Google authentication is not configured' });
+    }
+
+    let payload;
+    try {
+      const ticket = await googleClient.verifyIdToken({
+        idToken,
+        audience: googleClientId,
+      });
+      payload = ticket.getPayload();
+    } catch (tokenError) {
+      return res.status(401).json({ error: 'Invalid or expired Google token' });
+    }
+
+    if (!payload) {
+      return res.status(401).json({ error: 'Invalid or expired Google token' });
+    }
+
+    const issuer = payload.iss;
+    const exp = payload.exp;
+    const nowEpoch = Math.floor(Date.now() / 1000);
+
+    if (!issuer || !GOOGLE_ISSUERS.has(issuer)) {
+      return res.status(401).json({ error: 'Invalid or expired Google token' });
+    }
+
+    if (!exp || exp <= nowEpoch) {
+      return res.status(401).json({ error: 'Invalid or expired Google token' });
+    }
+
+    if (!payload.email_verified) {
+      return res.status(401).json({ error: 'Google account email is not verified' });
+    }
+
+    const email = typeof payload.email === 'string' ? payload.email.toLowerCase() : '';
+    const firstName = typeof payload.given_name === 'string' ? payload.given_name : null;
+    const lastName = typeof payload.family_name === 'string' ? payload.family_name : null;
+    const googleId = typeof payload.sub === 'string' ? payload.sub : '';
+
+    if (!email || !googleId) {
+      return res.status(401).json({ error: 'Invalid or expired Google token' });
+    }
+
+    const existingUser = await prisma.user.findUnique({
+      where: { email },
+    }) as any;
+
+    let user = existingUser;
+
+    if (existingUser) {
+      if (existingUser.googleId !== googleId) {
+        user = await prisma.user.update({
+          where: { id: existingUser.id },
+          data: {
+            googleId,
+          },
+        } as any);
+      }
+    } else {
+      user = await prisma.user.create({
+        data: {
+          email,
+          firstName,
+          lastName,
+          authProvider: 'google',
+          googleId,
+          password: null,
+        },
+      } as any);
+    }
+
+    if (!user) {
+      return res.status(500).json({ error: 'Failed to authenticate user' });
+    }
+
+    const token = createSessionToken(user.id, user.email);
+
+    return res.json(buildAuthResponse(user, token));
+  } catch (error) {
+    console.error('Google auth error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/forgot-password', async (req, res) => {
+  try {
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const now = Date.now();
+    const ip = getClientIp(req);
+
+    const genericResponse = {
+      message: 'If an account exists, a reset email has been sent.',
+    };
+
+    pruneExpiredBuckets(forgotPasswordIpBuckets, now);
+    pruneExpiredBuckets(forgotPasswordEmailBuckets, now);
+
+    const ipLimitResult = consumeRateLimit(forgotPasswordIpBuckets, ip, now);
+    if (!ipLimitResult.allowed) {
+      res.setHeader('Retry-After', String(ipLimitResult.retryAfterSeconds));
+      return res.status(429).json({ error: 'Too many requests. Please try again later.' });
+    }
+
+    if (email) {
+      const emailLimitResult = consumeRateLimit(forgotPasswordEmailBuckets, email, now);
+      if (!emailLimitResult.allowed) {
+        res.setHeader('Retry-After', String(emailLimitResult.retryAfterSeconds));
+        return res.status(429).json({ error: 'Too many requests. Please try again later.' });
+      }
+    }
+
+    if (!email) {
+      return res.json(genericResponse);
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (user) {
+      const resetToken = crypto.randomBytes(32).toString('hex');
+      const tokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+      const expiresAt = new Date(Date.now() + 1000 * 60 * 30);
+
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          resetPasswordToken: tokenHash,
+          resetPasswordExpiresAt: expiresAt,
+        } as unknown as any,
+      });
+
+      try {
+        await sendPasswordResetEmail({
+          to: email,
+          token: resetToken,
+        });
+      } catch (emailError) {
+        console.error('Failed to send password reset email:', emailError);
+      }
+    }
+
+    return res.json(genericResponse);
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/reset-password', async (req, res) => {
+  try {
+    const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+    const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
+    const tokenHash = token ? crypto.createHash('sha256').update(token).digest('hex') : '';
+
+    if (!token || !newPassword) {
+      return res.status(400).json({ error: 'Token and newPassword are required' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    const user = await prisma.user.findFirst({
+      where: {
+        resetPasswordToken: tokenHash,
+        resetPasswordExpiresAt: {
+          gt: new Date(),
+        },
+      } as unknown as any,
+    });
+
+    if (!user) {
+      return res.status(400).json({ error: 'Invalid or expired reset token' });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        password: hashedPassword,
+        resetPasswordToken: null,
+        resetPasswordExpiresAt: null,
+      } as unknown as any,
+    });
+
+    return res.json({ message: 'Password reset successful' });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 

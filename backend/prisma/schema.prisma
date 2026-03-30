@@ -12,50 +12,94 @@ model User {
   firstName String?
   lastName  String?
   email     String   @unique
-  password  String
+  password  String?
+  authProvider AuthProvider @default(local)
+  googleId  String? @unique
+  resetPasswordToken     String?   @unique
+  resetPasswordExpiresAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   tasks     Task[]
+  notifications Notification[]
 
   @@map("users")
 }
 
 model Task {
-  id          String    @id @default(cuid())
-  title       String
-  description String?
-  status      Status    @default(ACTIVE)
-  priority    Priority  @default(MEDIUM)
-  dueDate     DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  userId      String
-  subtasks    Subtask[]
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                String    @id @default(cuid())
+  title             String
+  description       String?
+  status            TaskStatus    @default(TODO)
+  priority          TaskPriority  @default(MEDIUM)
+  dueAt             DateTime?
+  completedAt       DateTime?
+  statusChangedAt   DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  userId            String
+  subtasks          Subtask[]
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("tasks")
 }
 
 model Subtask {
-  id          String   @id @default(cuid())
+  id          String        @id @default(cuid())
   title       String
   description String?
-  isCompleted Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  status      SubtaskStatus @default(TODO)
+  completedAt DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
   taskId      String
-  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  task        Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
   @@map("subtasks")
 }
 
-enum Status {
-  ACTIVE
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
   COMPLETED
+  CANCELLED
 }
 
-enum Priority {
+enum SubtaskStatus {
+  TODO
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskPriority {
   LOW
   MEDIUM
   HIGH
+  URGENT
+}
+
+enum AuthProvider {
+  local
+  google
+}
+
+enum NotificationType {
+  TASK_DUE_SOON
+  TASK_OVERDUE
+  MORNING_OVERVIEW
+  EVENING_REVIEW
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  readAt    DateTime?
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
 }

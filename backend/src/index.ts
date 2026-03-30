@@ -1,14 +1,14 @@
 // src/index.ts
+import 'dotenv/config';
 import express from 'express';
-import dotenv from 'dotenv';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './swagger';
 import authRoutes from './routes/auth';
 import taskRoutes from './routes/tasks';
+import aiRoutes from './routes/ai';
+import notificationRoutes from './routes/notifications';
 import cors from 'cors';
 import { errorHandler } from './middleware/errorHandler';
-
-dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -45,11 +45,21 @@ app.get('/api/docs', swaggerUi.setup(swaggerSpec, {
 // API Routes
 app.use('/api', authRoutes);
 app.use('/api', taskRoutes);
+app.use('/api', aiRoutes);
+app.use('/api', notificationRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
+  res.json({
+    status: 'ok',
+    message: 'Prioritize API is running',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
     message: 'Prioritize API is running',
     timestamp: new Date().toISOString(),
   });
@@ -66,6 +76,8 @@ app.get('/', (req, res) => {
       auth: {
         register: 'POST /api/register',
         login: 'POST /api/login',
+        forgotPassword: 'POST /api/forgot-password',
+        resetPassword: 'POST /api/reset-password',
         profile: 'GET /api/user/profile',
       },
       tasks: {
@@ -78,6 +90,14 @@ app.get('/', (req, res) => {
         create: 'POST /api/tasks/:id/subtasks',
         update: 'PATCH /api/subtasks/:id',
         delete: 'DELETE /api/subtasks/:id',
+      },
+      ai: {
+        parseTask: 'POST /api/ai/parse-task',
+      },
+      notifications: {
+        getAll: 'GET /api/notifications',
+        create: 'POST /api/notifications',
+        markRead: 'PATCH /api/notifications/:id/read',
       },
     },
   });

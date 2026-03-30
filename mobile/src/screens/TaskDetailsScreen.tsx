@@ -1,5 +1,5 @@
 // src/screens/TaskDetailsScreen.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,18 +9,26 @@ import {
   Alert,
   ActivityIndicator,
   TextInput,
+  Platform,
+  Modal,
+  Pressable,
+  Animated,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
+import { useTheme } from '../theme';
+import { deleteTaskById, updateTask } from '../config/api';
 
-const API_BASE_URL = 'http://100.100.66.131:3000';
+const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
 
 type Subtask = {
   id: string;
   title: string;
   description?: string;
-  isCompleted: boolean;
+  status: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+  completedAt?: string;
   createdAt: string;
 };
 
@@ -28,9 +36,11 @@ type Task = {
   id: string;
   title: string;
   description?: string;
-  dueDate?: string;
-  status: 'ACTIVE' | 'COMPLETED';
-  priority?: 'LOW' | 'MEDIUM' | 'HIGH';
+  dueAt?: string;
+  completedAt?: string;
+  statusChangedAt?: string;
+  status: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+  priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
   createdAt: string;
   updatedAt: string;
   subtasks?: Subtask[];
@@ -40,11 +50,12 @@ type EditableSubtask = {
   id: string;
   title: string;
   description?: string;
-  isCompleted: boolean;
+  status: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
   isDeleted?: boolean;
 };
 
 export default function TaskDetailsScreen({ route, navigation }: any) {
+  const { colors } = useTheme();
   const [task, setTask] = useState<Task | null>(route.params?.task || null);
   const [loading, setLoading] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -54,6 +65,13 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
   const [editDescription, setEditDescription] = useState(task?.description || '');
   const [editPriority, setEditPriority] = useState(task?.priority || 'MEDIUM');
   const [editSubtasks, setEditSubtasks] = useState<EditableSubtask[]>([]);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [datePickerMode, setDatePickerMode] = useState<'date' | 'time'>('date');
+  const [localDueAtIso, setLocalDueAtIso] = useState<string>(task?.dueAt || '');
+  const [savingDueAt, setSavingDueAt] = useState(false);
+  const modalOpacity = useRef(new Animated.Value(0)).current;
+  const modalTranslateY = useRef(new Animated.Value(40)).current;
 
   useEffect(() => {
     if (task) {
@@ -61,19 +79,21 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
       setEditDescription(task.description || '');
       setEditPriority(task.priority || 'MEDIUM');
       setEditSubtasks(task.subtasks?.map(st => ({ ...st, isDeleted: false })) || []);
+      setLocalDueAtIso(task.dueAt || '');
     }
   }, [task]);
 
   // Format date helper
   const formatDate = (dateString?: string) => {
-    if (!dateString) return 'No date set';
+    if (!dateString) return 'None';
     const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', {
-      weekday: 'long',
+    if (Number.isNaN(date.getTime())) return 'None';
+
+    return date.toLocaleString(undefined, {
       year: 'numeric',
-      month: 'long',
+      month: 'short',
       day: 'numeric',
-      hour: '2-digit',
+      hour: 'numeric',
       minute: '2-digit',
     });
   };
@@ -96,6 +116,145 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
     } else {
       return `${diffDays} days remaining`;
     }
+  };
+
+  const withDefaultTime = (date: Date): Date => {
+    const normalized = new Date(date);
+    normalized.setHours(23, 59, 0, 0);
+    return normalized;
+  };
+
+  const persistDueAt = async (nextDueAt: string | null) => {
+    if (!task) return;
+
+    try {
+      setSavingDueAt(true);
+      const updatedTask = await updateTask(task.id, { dueAt: nextDueAt });
+      setTask(updatedTask as Task);
+      setLocalDueAtIso(updatedTask?.dueAt || '');
+    } catch (error: any) {
+      Alert.alert('Error', error?.message ?? 'Failed to update due date');
+    } finally {
+      setSavingDueAt(false);
+    }
+  };
+
+  const commitDueAt = async (date: Date) => {
+    const normalized = new Date(date);
+    normalized.setSeconds(0, 0);
+    const nextIso = normalized.toISOString();
+    setSelectedDate(normalized);
+    setLocalDueAtIso(nextIso);
+    await persistDueAt(nextIso);
+  };
+
+  const clearDueAt = async () => {
+    setLocalDueAtIso('');
+    setSelectedDate(new Date());
+    await persistDueAt(null);
+    setShowDatePicker(false);
+    setDatePickerMode('date');
+  };
+
+  const openAndroidTimePicker = (baseDate: Date) => {
+    DateTimePickerAndroid.open({
+      value: baseDate,
+      mode: 'time',
+      is24Hour: false,
+      onChange: async (event, timeValue) => {
+        if (event.type === 'set' && timeValue) {
+          const withTime = new Date(baseDate);
+          withTime.setHours(timeValue.getHours(), timeValue.getMinutes(), 0, 0);
+          await commitDueAt(withTime);
+          return;
+        }
+
+        await commitDueAt(baseDate);
+      },
+    });
+  };
+
+  const openDatePicker = () => {
+    const parsedDueDate = localDueAtIso ? new Date(localDueAtIso) : new Date();
+    const baseDate = Number.isNaN(parsedDueDate.getTime()) ? new Date() : parsedDueDate;
+    const defaultedDate = localDueAtIso ? baseDate : withDefaultTime(baseDate);
+
+    setSelectedDate(defaultedDate);
+
+    if (Platform.OS === 'android') {
+      DateTimePickerAndroid.open({
+        value: defaultedDate,
+        mode: 'date',
+        display: 'calendar',
+        onChange: (event, selectedDateValue) => {
+          if (event.type !== 'set' || !selectedDateValue) return;
+          const selectedWithDefaultTime = localDueAtIso
+            ? new Date(selectedDateValue)
+            : withDefaultTime(selectedDateValue);
+          setSelectedDate(selectedWithDefaultTime);
+          openAndroidTimePicker(selectedWithDefaultTime);
+        },
+      });
+      return;
+    }
+
+    setDatePickerMode('date');
+    setShowDatePicker(true);
+
+    if (Platform.OS === 'ios') {
+      modalOpacity.setValue(0);
+      modalTranslateY.setValue(40);
+      requestAnimationFrame(() => {
+        Animated.parallel([
+          Animated.timing(modalOpacity, { toValue: 1, duration: 220, useNativeDriver: true }),
+          Animated.timing(modalTranslateY, { toValue: 0, duration: 220, useNativeDriver: true }),
+        ]).start();
+      });
+    }
+  };
+
+  const closeDatePicker = () => {
+    if (Platform.OS === 'ios') {
+      Animated.parallel([
+        Animated.timing(modalOpacity, { toValue: 0, duration: 180, useNativeDriver: true }),
+        Animated.timing(modalTranslateY, { toValue: 40, duration: 180, useNativeDriver: true }),
+      ]).start(() => {
+        setShowDatePicker(false);
+        setDatePickerMode('date');
+      });
+      return;
+    }
+
+    setShowDatePicker(false);
+    setDatePickerMode('date');
+  };
+
+  const handleToday = () => {
+    const today = withDefaultTime(new Date());
+    setSelectedDate(today);
+  };
+
+  const handleTomorrow = () => {
+    const tomorrow = withDefaultTime(new Date());
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    setSelectedDate(tomorrow);
+  };
+
+  const onDateChange = (event: any, date?: Date) => {
+    if (Platform.OS !== 'ios') return;
+    if (event.type !== 'set' || !date) return;
+
+    const updatedDate = new Date(selectedDate);
+    if (datePickerMode === 'date') {
+      updatedDate.setFullYear(date.getFullYear(), date.getMonth(), date.getDate());
+      if (!localDueAtIso) {
+        updatedDate.setHours(23, 59, 0, 0);
+      }
+    } else {
+      updatedDate.setHours(date.getHours(), date.getMinutes(), 0, 0);
+    }
+
+    setSelectedDate(updatedDate);
   };
 
   // Get priority color
@@ -161,7 +320,7 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
         id: `temp_${Date.now()}`, // Temporary ID for new subtasks
         title: '',
         description: '',
-        isCompleted: false,
+        status: 'TODO',
         isDeleted: false,
       },
     ]);
@@ -194,24 +353,12 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
         return;
       }
 
-      // Update main task
-      const response = await fetch(`${API_BASE_URL}/api/tasks/${task.id}`, {
-        method: 'PATCH',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          title: editTitle,
-          description: editDescription,
-          priority: editPriority,
-        }),
+      // Use shared update helper so sync hooks stay centralized.
+      await updateTask(task.id, {
+        title: editTitle,
+        description: editDescription,
+        priority: editPriority,
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to update task');
-      }
 
       // Update or delete existing subtasks
       for (const subtask of editSubtasks) {
@@ -269,9 +416,17 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
       if (updatedResponse.ok) {
         const data = await updatedResponse.json();
         setTask(data.task);
-        setIsEditing(false);
-        Alert.alert('Success', 'Task updated successfully');
       }
+
+      setIsEditing(false);
+      Alert.alert('Success', 'Changes have been saved.');
+      navigation.navigate('Main', {
+        screen: 'Home',
+        params: {
+          refresh: true,
+          updatedAt: Date.now(),
+        },
+      });
     } catch (error) {
       console.error('Error updating task:', error);
       Alert.alert('Error', error instanceof Error ? error.message : 'Failed to update task');
@@ -286,32 +441,12 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
 
     try {
       setLoading(true);
-      const token = await AsyncStorage.getItem('authToken');
-      
-      if (!token) {
-        Alert.alert('Error', 'No authentication token found');
-        return;
-      }
+      const newStatus = task.status === 'COMPLETED' ? 'TODO' : 'COMPLETED';
+      const completedAt = newStatus === 'COMPLETED' ? new Date().toISOString() : undefined;
 
-      const newStatus = task.status === 'ACTIVE' ? 'COMPLETED' : 'ACTIVE';
-
-      const response = await fetch(`${API_BASE_URL}/api/tasks/${task.id}`, {
-        method: 'PATCH',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ status: newStatus }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setTask(data.task);
-        Alert.alert('Success', `Task marked as ${newStatus.toLowerCase()}`);
-      } else {
-        const errorData = await response.json();
-        Alert.alert('Error', errorData.error || 'Failed to update task');
-      }
+      const updated = await updateTask(task.id, { status: newStatus, completedAt });
+      setTask(updated as Task);
+      Alert.alert('Success', `Task marked as ${newStatus.toLowerCase()}`);
     } catch (error) {
       console.error('Error toggling task status:', error);
       Alert.alert('Error', 'Failed to update task status');
@@ -338,31 +473,14 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
           onPress: async () => {
             try {
               setLoading(true);
-              const token = await AsyncStorage.getItem('authToken');
-              
-              if (!token) {
-                Alert.alert('Error', 'No authentication token found');
-                return;
-              }
-
-              const response = await fetch(`${API_BASE_URL}/api/tasks/${task.id}`, {
-                method: 'DELETE',
-                headers: {
-                  'Authorization': `Bearer ${token}`,
+              // Use shared delete helper so sync hooks stay centralized.
+              await deleteTaskById(task.id);
+              Alert.alert('Success', 'Task deleted successfully', [
+                {
+                  text: 'OK',
+                  onPress: () => navigation.goBack(),
                 },
-              });
-
-              if (response.ok) {
-                Alert.alert('Success', 'Task deleted successfully', [
-                  {
-                    text: 'OK',
-                    onPress: () => navigation.goBack(),
-                  },
-                ]);
-              } else {
-                const errorData = await response.json();
-                Alert.alert('Error', errorData.error || 'Failed to delete task');
-              }
+              ]);
             } catch (error) {
               console.error('Error deleting task:', error);
               Alert.alert('Error', 'Failed to delete task');
@@ -376,7 +494,7 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
   };
 
   // Toggle subtask completion
-  const toggleSubtask = async (subtaskId: string, currentStatus: boolean) => {
+  const toggleSubtask = async (subtaskId: string, currentStatus: Subtask['status']) => {
     try {
       const token = await AsyncStorage.getItem('authToken');
       
@@ -385,25 +503,41 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
         return;
       }
 
+      const newStatus: Subtask['status'] = currentStatus === 'COMPLETED' ? 'TODO' : 'COMPLETED';
+      const completedAt = newStatus === 'COMPLETED' ? new Date().toISOString() : undefined;
+
       const response = await fetch(`${API_BASE_URL}/api/subtasks/${subtaskId}`, {
         method: 'PATCH',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ isCompleted: !currentStatus }),
+        body: JSON.stringify({ status: newStatus, completedAt }),
       });
 
       if (response.ok) {
         const data = await response.json();
-        // Update the subtask in the local state
+        if (data?.task) {
+          setTask(data.task);
+          return;
+        }
+
+        // Fallback update if backend does not return updated parent task
         setTask((prevTask) => {
           if (!prevTask) return null;
+
+          const nextSubtasks = prevTask.subtasks?.map((st) =>
+            st.id === subtaskId ? { ...st, status: newStatus, completedAt } : st
+          );
+
+          const allCompleted = (nextSubtasks ?? []).length > 0
+            && (nextSubtasks ?? []).every((st) => st.status === 'COMPLETED');
+
           return {
             ...prevTask,
-            subtasks: prevTask.subtasks?.map((st) =>
-              st.id === subtaskId ? { ...st, isCompleted: !currentStatus } : st
-            ),
+            status: allCompleted ? 'COMPLETED' : 'TODO',
+            completedAt: allCompleted ? new Date().toISOString() : undefined,
+            subtasks: nextSubtasks,
           };
         });
       } else {
@@ -600,20 +734,52 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
         </View>
 
         {/* Due Date Section */}
-        {!isEditing && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Due Date</Text>
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Due Date</Text>
+          {isEditing ? (
+            <TouchableOpacity
+              style={styles.infoCard}
+              onPress={openDatePicker}
+              activeOpacity={0.8}
+              disabled={savingDueAt}
+            >
+              <View style={styles.iconContainer}>
+                <MaterialIcons name="event" size={22} color="#2563EB" />
+              </View>
+              <View style={styles.infoContent}>
+                <Text style={styles.infoMainText}>{localDueAtIso ? formatRelativeDate(localDueAtIso) : 'No due date'}</Text>
+                <Text style={styles.infoSubText}>{formatDate(localDueAtIso || undefined)}</Text>
+              </View>
+              <View style={styles.dueRightActions}>
+                {localDueAtIso ? (
+                  <TouchableOpacity
+                    style={styles.clearDueButton}
+                    onPress={(event) => {
+                      event.stopPropagation();
+                      clearDueAt();
+                    }}
+                    disabled={savingDueAt}
+                  >
+                    <MaterialIcons name="close" size={16} color="#6B7280" />
+                  </TouchableOpacity>
+                ) : null}
+                {savingDueAt ? (
+                  <ActivityIndicator size="small" color="#6B7280" />
+                ) : null}
+              </View>
+            </TouchableOpacity>
+          ) : (
             <View style={styles.infoCard}>
               <View style={styles.iconContainer}>
                 <MaterialIcons name="event" size={22} color="#2563EB" />
               </View>
               <View style={styles.infoContent}>
-                <Text style={styles.infoMainText}>{formatRelativeDate(task.dueDate)}</Text>
-                <Text style={styles.infoSubText}>{formatDate(task.dueDate)}</Text>
+                <Text style={styles.infoMainText}>{localDueAtIso ? formatRelativeDate(localDueAtIso) : 'No due date'}</Text>
+                <Text style={styles.infoSubText}>{formatDate(localDueAtIso || undefined)}</Text>
               </View>
             </View>
-          </View>
-        )}
+          )}
+        </View>
 
         {/* Subtasks Section */}
         {(isEditing || (!isEditing && task.subtasks && task.subtasks.length > 0)) && (
@@ -622,7 +788,7 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
               <Text style={styles.sectionTitle}>Subtasks</Text>
               {!isEditing && (
                 <Text style={styles.subtaskCount}>
-                  {task.subtasks?.filter((st) => st.isCompleted).length}/{task.subtasks?.length} completed
+                  {task.subtasks?.filter((st) => st.status === 'COMPLETED').length}/{task.subtasks?.length} completed
                 </Text>
               )}
             </View>
@@ -672,21 +838,21 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
                 <TouchableOpacity
                   key={subtask.id}
                   style={styles.subtaskCard}
-                  onPress={() => toggleSubtask(subtask.id, subtask.isCompleted)}
+                  onPress={() => toggleSubtask(subtask.id, subtask.status)}
                   activeOpacity={0.7}
                 >
                   <View style={styles.subtaskCheckbox}>
                     <MaterialIcons
-                      name={subtask.isCompleted ? 'check-circle' : 'radio-button-unchecked'}
+                      name={subtask.status === 'COMPLETED' ? 'check-circle' : 'radio-button-unchecked'}
                       size={24}
-                      color={subtask.isCompleted ? '#00C853' : '#9CA3AF'}
+                      color={subtask.status === 'COMPLETED' ? '#00C853' : '#9CA3AF'}
                     />
                   </View>
                   <View style={styles.subtaskContent}>
                     <Text
                       style={[
                         styles.subtaskTitle,
-                        subtask.isCompleted && styles.subtaskTitleCompleted,
+                        subtask.status === 'COMPLETED' && styles.subtaskTitleCompleted,
                       ]}
                     >
                       {subtask.title}
@@ -805,6 +971,65 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
         {/* Bottom spacing */}
         <View style={{ height: 24 }} />
       </ScrollView>
+
+      {Platform.OS === 'ios' && showDatePicker && (
+        <Modal transparent animationType="none" visible onRequestClose={closeDatePicker}>
+          <View style={styles.modalRoot}>
+            <Pressable onPress={closeDatePicker} style={styles.modalBackdropPressable}>
+              <Animated.View style={[styles.modalBackdrop, { opacity: modalOpacity }]} />
+            </Pressable>
+            <Animated.View
+              style={[
+                styles.dateSheet,
+                { backgroundColor: colors.surface, borderTopColor: colors.border },
+                { opacity: modalOpacity, transform: [{ translateY: modalTranslateY }] },
+              ]}
+            >
+              <View style={[styles.sheetHeader, { borderBottomColor: colors.border }]}> 
+                <TouchableOpacity onPress={clearDueAt}>
+                  <Text style={[styles.sheetActionText, { color: colors.danger }]}>Clear</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handleToday}>
+                  <Text style={[styles.sheetActionText, { color: colors.primary }]}>Today</Text>
+                </TouchableOpacity>
+                {datePickerMode === 'date' ? (
+                  <TouchableOpacity onPress={() => setDatePickerMode('time')}>
+                    <Text style={[styles.sheetActionText, { color: colors.primary }]}>Next</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    onPress={async () => {
+                      await commitDueAt(selectedDate);
+                      closeDatePicker();
+                    }}
+                  >
+                    <Text style={[styles.sheetActionText, { color: colors.primary }]}>Done</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              <View style={styles.datePickerContainer}>
+                <DateTimePicker
+                  value={selectedDate}
+                  mode={datePickerMode}
+                  display="spinner"
+                  onChange={onDateChange}
+                  minimumDate={datePickerMode === 'date' ? new Date() : undefined}
+                  textColor={colors.text}
+                  style={styles.datePicker}
+                />
+              </View>
+            </Animated.View>
+          </View>
+        </Modal>
+      )}
+
+      {/* QA checklist:
+          1) Existing dueAt task -> tap due date -> change date/time -> persisted and shown immediately.
+          2) No dueAt task -> tap due date -> select date only -> defaults to 23:59 local if time not changed.
+          3) Clear in iOS sheet -> dueAt becomes null and UI shows None.
+          4) Calendar date dots/task grouping move after returning to Calendar (focus refresh).
+          5) Home list reflects updated due time after returning (focus refresh).
+      */}
     </SafeAreaView>
   );
 }
@@ -1056,6 +1281,21 @@ const styles = StyleSheet.create({
   infoContent: {
     flex: 1,
   },
+  dueRightActions: {
+    marginLeft: 10,
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  clearDueButton: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   infoMainText: {
     fontSize: 16,
     fontWeight: '700',
@@ -1234,5 +1474,42 @@ const styles = StyleSheet.create({
   },
   actionButtonTextSecondary: {
     color: '#1F2937',
+  },
+
+  modalRoot: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  modalBackdropPressable: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
+  },
+  dateSheet: {
+    borderTopWidth: 1,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingBottom: 16,
+    paddingTop: 8,
+  },
+  sheetHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  sheetActionText: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  datePickerContainer: {
+    alignItems: 'center',
+    paddingTop: 8,
+  },
+  datePicker: {
+    width: '100%',
   },
 });
