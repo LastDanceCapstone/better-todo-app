@@ -1,28 +1,30 @@
 // src/index.ts
+
+import 'dotenv/config';
 import express from 'express';
-<<<<<<< HEAD
-import dotenv from 'dotenv';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './swagger';
 import authRoutes from './routes/auth';
 import taskRoutes from './routes/tasks';
-import cors from 'cors';
 import aiRoutes from './routes/ai';
-
-=======
+import notificationRoutes from './routes/notifications';
 import cors from 'cors';
-import jwt from 'jsonwebtoken';
-import dotenv from 'dotenv';
-import authRouter from './routes/auth';
-import tasksRouter from './routes/tasks';
-import { prisma } from './prisma';
->>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
-
-dotenv.config();
+import cron from 'node-cron';
+import { sendScheduledNotifications } from './services/scheduledNotifications';
 
 const app = express();
-<<<<<<< HEAD
 const PORT = Number(process.env.PORT) || 3000;
+
+// Schedule morning notification at 8:00 AM and evening at 8:00 PM server time
+cron.schedule('0 8,20 * * *', async () => {
+  try {
+    console.log('[Scheduler] Running scheduled notifications job...');
+    await sendScheduledNotifications();
+    console.log('[Scheduler] Notifications sent.');
+  } catch (err) {
+    console.error('[Scheduler] Error sending scheduled notifications:', err);
+  }
+});
 
 // Middleware
 app.use(cors());
@@ -54,10 +56,20 @@ app.get('/api/docs', swaggerUi.setup(swaggerSpec, {
 // API Routes
 app.use('/api', authRoutes);
 app.use('/api', taskRoutes);
-
-// Ai Routes
 app.use('/api', aiRoutes);
+app.use('/api', notificationRoutes);
 
+// Manual test endpoint for scheduled notifications (DEV ONLY)
+if (process.env.NODE_ENV !== 'production') {
+  app.post('/api/test-scheduled-notifications', async (req, res) => {
+    try {
+      await sendScheduledNotifications();
+      res.json({ message: 'Scheduled notifications job executed.' });
+    } catch (err) {
+      res.status(500).json({ error: 'Error running scheduled notifications', details: String(err) });
+    }
+  });
+}
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -87,6 +99,8 @@ app.get('/', (req, res) => {
       auth: {
         register: 'POST /api/register',
         login: 'POST /api/login',
+        forgotPassword: 'POST /api/forgot-password',
+        resetPassword: 'POST /api/reset-password',
         profile: 'GET /api/user/profile',
       },
       tasks: {
@@ -100,6 +114,14 @@ app.get('/', (req, res) => {
         update: 'PATCH /api/subtasks/:id',
         delete: 'DELETE /api/subtasks/:id',
       },
+      ai: {
+        parseTask: 'POST /api/ai/parse-task',
+      },
+      notifications: {
+        getAll: 'GET /api/notifications',
+        create: 'POST /api/notifications',
+        markRead: 'PATCH /api/notifications/:id/read',
+      },
     },
   });
 });
@@ -109,55 +131,4 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`Local access: http://localhost:${PORT}`);
   console.log(`Network access: http://100.100.66.131:${PORT}`);
   console.log(`📚 API Documentation: http://100.100.66.131:${PORT}/api/docs`);
-=======
-const PORT = process.env.PORT || 3000;
-
-// middleware
-app.use(express.json());
-app.use(cors());
-
-// auth middleware (attach user to req)
-const authenticateToken = (req: any, res: any, next: any) => {
-  // allow public routes before auth
-  if (req.path === '/api/login' || req.path === '/api/register' || req.path === '/api/health') {
-    return next();
-  }
-
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (!token) {
-    return res.status(401).json({ error: 'Access token required' });
-  }
-
-  jwt.verify(token, process.env.JWT_SECRET!, (err: any, user: any) => {
-    if (err) {
-      return res.status(403).json({ error: 'Invalid or expired token' });
-    }
-    req.user = user;
-    next();
-  });
-};
-
-app.use(authenticateToken);
-
-// health
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'OK', message: 'Server is running' });
-});
-
-// mount routes
-app.use('/api', authRouter);
-app.use('/api', tasksRouter);
-
-// start server
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
-});
-
-// graceful shutdown
-process.on('SIGINT', async () => {
-  await prisma.$disconnect();
-  process.exit();
->>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
 });

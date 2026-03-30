@@ -12,16 +12,20 @@ model User {
   firstName String?
   lastName  String?
   email     String   @unique
-  password  String
+  password  String?
+  authProvider AuthProvider @default(local)
+  googleId  String? @unique
+  resetPasswordToken     String?   @unique
+  resetPasswordExpiresAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   tasks     Task[]
+  notifications Notification[]
 
   @@map("users")
 }
 
 model Task {
-<<<<<<< HEAD
   id                String    @id @default(cuid())
   title             String
   description       String?
@@ -35,25 +39,11 @@ model Task {
   userId            String
   subtasks          Subtask[]
   user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-=======
-  id          String    @id @default(cuid())
-  title       String
-  description String?
-  status      Status    @default(ACTIVE)
-  priority    Priority  @default(MEDIUM)
-  dueDate     DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  userId      String
-  subtasks    Subtask[]
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
->>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
 
   @@map("tasks")
 }
 
 model Subtask {
-<<<<<<< HEAD
   id          String        @id @default(cuid())
   title       String
   description String?
@@ -63,21 +53,10 @@ model Subtask {
   updatedAt   DateTime      @updatedAt
   taskId      String
   task        Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
-=======
-  id          String   @id @default(cuid())
-  title       String
-  description String?
-  isCompleted Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  taskId      String
-  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
->>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
 
   @@map("subtasks")
 }
 
-<<<<<<< HEAD
 enum TaskStatus {
   TODO
   IN_PROGRESS
@@ -97,15 +76,30 @@ enum TaskPriority {
   MEDIUM
   HIGH
   URGENT
-=======
-enum Status {
-  ACTIVE
-  COMPLETED
 }
 
-enum Priority {
-  LOW
-  MEDIUM
-  HIGH
->>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
+enum AuthProvider {
+  local
+  google
+}
+
+enum NotificationType {
+  TASK_DUE_SOON
+  TASK_OVERDUE
+  MORNING_OVERVIEW
+  EVENING_REVIEW
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  readAt    DateTime?
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
 }

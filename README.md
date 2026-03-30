@@ -1,10 +1,6 @@
 # Capstone Project Workspace
 
-<<<<<<< HEAD
 This repository will serve as the general workspace for all changes, updates, and creations for the capstone project
-=======
-This respitory will serve as the general workspace for all changes, updates, and creations for the capstone project
->>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
 
 ----------
 
@@ -21,7 +17,6 @@ This respitory will serve as the general workspace for all changes, updates, and
 ----------
  
 # Project Links
-<<<<<<< HEAD
 - **Kanban Board:** https://trello.com/b/8E3yaviu/sprint-0
 - **Team Zoom:** https://us05web.zoom.us/j/87439424208?pwd=IuVsDdhyVNlJAh7mNVkwqRSrUSQjti.1
   -   Meeting ID: 874 3942 4208
@@ -155,30 +150,3 @@ To connect your mobile app to the backend server:
    - Example: `http://192.168.1.150:3000/api/login`
 
 ----------
-=======
-- **Kanban Board:** https://trello.com/b/CSWlLk7f/capstone-kanban
-- **Team Zoom:** https://us05web.zoom.us/j/87439424208?pwd=IuVsDdhyVNlJAh7mNVkwqRSrUSQjti.1
-  -   Meeting ID: 874 3942 4208
-  -   Passcode: 7epwSw
-- **Github Repo:** https://github.com/LastDanceCapstone/better-todo-app
-
-
-# Prioritize – Setup & Run App Guide
-
-- cd mobile
-- npm install
-
-start Expo:
-- npx expo start --tunnel (Don't need to include --tunnel if you're mobile device and computer are on same network)
-
-
-Install Expo Go from the App Store / Play Store.
-
-Run npx expo start --tunnel in the mobile/ folder.
-
-A QR code will show in the terminal.
-
-Open camera on your phone - Scan the QR Code
-
-This should open straight to the Home/Dashboard Screen
->>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540

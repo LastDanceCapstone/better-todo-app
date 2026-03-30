@@ -2,10 +2,7 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
-<<<<<<< HEAD
   TextInput,
-=======
->>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
   TouchableOpacity,
   StyleSheet,
   KeyboardAvoidingView,
@@ -15,16 +12,13 @@ import {
   Alert
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
-<<<<<<< HEAD
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
-
-const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
-=======
-import CustomTextInput from '../../components/CustomTextInput';
->>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
+import { useTheme } from '../theme';
+import { API_BASE_URL } from '../config/api';
+import { getGoogleErrorMessage, signInWithGoogle } from '../config/googleSignIn';
 
 export default function LoginScreen({ navigation }: any) {
+  const { colors } = useTheme();
   const [isLogin, setIsLogin] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
@@ -35,18 +29,106 @@ export default function LoginScreen({ navigation }: any) {
     confirmPassword: ''
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
+  const isAuthBusy = isSubmitting || isGoogleSubmitting;
+
+  const completeAuthSuccess = async (data: any, successMessage: string) => {
+    await AsyncStorage.setItem('authToken', data.token);
+    await AsyncStorage.setItem('user', JSON.stringify(data.user));
+
+    Alert.alert('Success', successMessage, [
+      {
+        text: 'OK',
+        onPress: () =>
+          navigation.replace('Main', {
+            screen: 'Home',
+            params: {
+              email: data.user?.email,
+              token: data.token,
+              user: data.user,
+            },
+          }),
+      },
+    ]);
+  };
 
   const validateEmail = (email: string) => {
     const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return re.test(email);
   };
 
-<<<<<<< HEAD
+  const handleForgotPassword = async () => {
+    const email = formData.email.trim();
+
+    if (!email || !validateEmail(email)) {
+      Alert.alert('Error', 'Please enter your email first');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/forgot-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email }),
+      });
+
+      const contentType = response.headers.get('content-type') || '';
+      const isJson = contentType.includes('application/json');
+      const payload = isJson ? await response.json() : await response.text();
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          Alert.alert(
+            'Reset Endpoint Not Deployed',
+            'The backend at this URL does not have /api/forgot-password yet. You can continue to Reset Password and use a token from backend console.',
+            [
+              {
+                text: 'Continue',
+                onPress: () => navigation.navigate('ResetPassword', { email }),
+              },
+              { text: 'Cancel', style: 'cancel' },
+            ]
+          );
+          return;
+        }
+
+        const errorMessage =
+          isJson && payload?.error
+            ? payload.error
+            : `Failed to request reset token (Status ${response.status})`;
+
+        Alert.alert('Error', errorMessage);
+        return;
+      }
+
+      Alert.alert(
+        'Success',
+        'Check your email or backend console for the reset token',
+        [
+          {
+            text: 'OK',
+            onPress: () => navigation.navigate('ResetPassword', { email }),
+          },
+        ]
+      );
+    } catch (error: any) {
+      Alert.alert(
+        'Error',
+        error.message?.includes('Network')
+          ? 'Failed to connect. Please check your internet and try again.'
+          : 'Failed to request reset token'
+      );
+    }
+  };
+
   const handleSubmit = async () => {
+    if (isSubmitting || isGoogleSubmitting) {
+      return;
+    }
+
     // Validation
-=======
-  const handleSubmit = () => {
->>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
     if (!formData.email || !validateEmail(formData.email)) {
       Alert.alert('Error', 'Please enter a valid email');
       return;
@@ -70,7 +152,6 @@ export default function LoginScreen({ navigation }: any) {
 
     setIsSubmitting(true);
 
-<<<<<<< HEAD
     try {
       const endpoint = isLogin ? '/api/login' : '/api/register';
       const payload = isLogin 
@@ -116,24 +197,7 @@ export default function LoginScreen({ navigation }: any) {
       console.log('Response data:', data);
 
       if (response.ok) {
-        // Store token and user data locally
-        await AsyncStorage.setItem('authToken', data.token);
-        await AsyncStorage.setItem('user', JSON.stringify(data.user));
-
-        Alert.alert(
-          'Success',
-          isLogin ? 'Login successful!' : 'Registration successful!',
-          [
-            {
-              text: 'OK',
-              onPress: () => navigation.replace('Home', { 
-                email: formData.email,
-                token: data.token,
-                user: data.user 
-              })
-            }
-          ]
-        );
+        await completeAuthSuccess(data, isLogin ? 'Login successful!' : 'Registration successful!');
       } else {
         Alert.alert('Error', data.error || 'Something went wrong');
       }
@@ -163,21 +227,59 @@ export default function LoginScreen({ navigation }: any) {
     } finally {
       setIsSubmitting(false);
     }
-=======
-    setTimeout(() => {
-      setIsSubmitting(false);
-      Alert.alert(
-        'Success',
-        isLogin ? 'Login successful!' : 'Registration successful!',
-        [
-          {
-            text: 'OK',
-            onPress: () => navigation.replace('Home', { email: formData.email })
-          }
-        ]
-      );
-    }, 1500);
->>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
+  };
+
+  const handleGoogleContinue = async () => {
+    if (isSubmitting || isGoogleSubmitting) {
+      return;
+    }
+
+    setIsGoogleSubmitting(true);
+
+    try {
+      // Replaced expo-auth-session browser OAuth with native SDK on iOS to avoid
+      // redirect URI failures and ensure stable token retrieval in dev builds.
+      const { idToken } = await signInWithGoogle();
+
+      const response = await fetch(`${API_BASE_URL}/api/auth/google`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ idToken }),
+      });
+
+      console.log('[Google Auth] status:', response.status);
+      console.log('[Google Auth] content-type:', response.headers.get('content-type'));
+
+      const rawText = await response.text();
+
+      // Attempt JSON parse — backend may return HTML on 404/500 pages.
+      let data: any = null;
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        console.error('[Google Auth] Non-JSON response received:', rawText.slice(0, 500));
+        Alert.alert('Google Sign-In Failed', 'Server error. Please try again later.');
+        return;
+      }
+
+      if (!response.ok) {
+        const message =
+          typeof data?.error === 'string' && data.error.length > 0
+            ? data.error
+            : `Unable to authenticate with Google (HTTP ${response.status}).`;
+        console.error('[Google Auth] Error response:', data);
+        Alert.alert('Google Sign-In Failed', message);
+        return;
+      }
+
+      await completeAuthSuccess(data, 'Login successful!');
+    } catch (error: any) {
+      Alert.alert('Google Sign-In Failed', getGoogleErrorMessage(error));
+    } finally {
+      setIsGoogleSubmitting(false);
+    }
   };
 
   return (
@@ -204,13 +306,8 @@ export default function LoginScreen({ navigation }: any) {
             {isLogin ? 'Welcome Back' : 'Create Account'}
           </Text>
           <Text style={styles.cardSubtitle}>
-<<<<<<< HEAD
             {isLogin 
               ? 'Sign in to continue to your dashboard' 
-=======
-            {isLogin
-              ? 'Sign in to continue to your dashboard'
->>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
               : 'Start organizing your tasks today'}
           </Text>
 
@@ -219,39 +316,21 @@ export default function LoginScreen({ navigation }: any) {
             <View style={styles.nameRow}>
               <View style={styles.nameInput}>
                 <Text style={styles.label}>First Name</Text>
-<<<<<<< HEAD
                 <TextInput
                   style={styles.input}
                   placeholder="John"
                   value={formData.firstName}
                   onChangeText={(text) => setFormData({...formData, firstName: text})}
-=======
-                <CustomTextInput
-                  placeholder="John"
-                  value={formData.firstName}
-                  onChangeText={(text) =>
-                    setFormData({ ...formData, firstName: text })
-                  }
->>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
                   autoCapitalize="words"
                 />
               </View>
               <View style={styles.nameInput}>
                 <Text style={styles.label}>Last Name</Text>
-<<<<<<< HEAD
                 <TextInput
                   style={styles.input}
                   placeholder="Doe"
                   value={formData.lastName}
                   onChangeText={(text) => setFormData({...formData, lastName: text})}
-=======
-                <CustomTextInput
-                  placeholder="Doe"
-                  value={formData.lastName}
-                  onChangeText={(text) =>
-                    setFormData({ ...formData, lastName: text })
-                  }
->>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
                   autoCapitalize="words"
                 />
               </View>
@@ -261,20 +340,11 @@ export default function LoginScreen({ navigation }: any) {
           {/* Email */}
           <View style={styles.formGroup}>
             <Text style={styles.label}>Email</Text>
-<<<<<<< HEAD
             <TextInput
               style={styles.input}
               placeholder="you@example.com"
               value={formData.email}
               onChangeText={(text) => setFormData({...formData, email: text})}
-=======
-            <CustomTextInput
-              placeholder="you@example.com"
-              value={formData.email}
-              onChangeText={(text) =>
-                setFormData({ ...formData, email: text })
-              }
->>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
@@ -284,7 +354,6 @@ export default function LoginScreen({ navigation }: any) {
           {/* Password */}
           <View style={styles.formGroup}>
             <Text style={styles.label}>Password</Text>
-<<<<<<< HEAD
             <View style={styles.passwordContainer}>
               <TextInput
                 style={styles.passwordInput}
@@ -305,49 +374,17 @@ export default function LoginScreen({ navigation }: any) {
                 )}
               </TouchableOpacity>
             </View>
-=======
-            <CustomTextInput
-              placeholder="••••••••"
-              value={formData.password}
-              onChangeText={(text) =>
-                setFormData({ ...formData, password: text })
-              }
-              secureTextEntry={!showPassword}
-              autoCapitalize="none"
-              rightActionIcon={
-                showPassword ? (
-                  <MaterialIcons
-                    name="visibility-off"
-                    size={20}
-                    color="#9CA3AF"
-                  />
-                ) : (
-                  <MaterialIcons name="visibility" size={20} color="#9CA3AF" />
-                )
-              }
-              onRightActionPress={() => setShowPassword((prev) => !prev)}
-            />
->>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
           </View>
 
           {/* Confirm Password (Registration only) */}
           {!isLogin && (
             <View style={styles.formGroup}>
               <Text style={styles.label}>Confirm Password</Text>
-<<<<<<< HEAD
               <TextInput
                 style={styles.input}
                 placeholder="••••••••"
                 value={formData.confirmPassword}
                 onChangeText={(text) => setFormData({...formData, confirmPassword: text})}
-=======
-              <CustomTextInput
-                placeholder="••••••••"
-                value={formData.confirmPassword}
-                onChangeText={(text) =>
-                  setFormData({ ...formData, confirmPassword: text })
-                }
->>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"
               />
@@ -356,16 +393,16 @@ export default function LoginScreen({ navigation }: any) {
 
           {/* Forgot Password (Login only) */}
           {isLogin && (
-            <TouchableOpacity style={styles.forgotPassword}>
-              <Text style={styles.forgotPasswordText}>Forgot password?</Text>
+            <TouchableOpacity style={styles.forgotPassword} onPress={handleForgotPassword}>
+              <Text style={[styles.forgotPasswordText, { color: colors.primary }]}>Forgot Password?</Text>
             </TouchableOpacity>
           )}
 
           {/* Submit Button */}
           <TouchableOpacity
-            style={styles.submitButton}
+            style={[styles.submitButton, { opacity: isAuthBusy ? 0.7 : 1 }]}
             onPress={handleSubmit}
-            disabled={isSubmitting}
+            disabled={isAuthBusy}
           >
             {isSubmitting ? (
               <ActivityIndicator color="#FFFFFF" />
@@ -376,13 +413,43 @@ export default function LoginScreen({ navigation }: any) {
             )}
           </TouchableOpacity>
 
+          <>
+            <View style={styles.dividerRow}>
+              <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+              <Text style={[styles.dividerText, { color: colors.mutedText }]}>or</Text>
+              <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+            </View>
+
+            <TouchableOpacity
+              style={[
+                styles.googleButton,
+                {
+                  borderColor: colors.border,
+                  backgroundColor: colors.surface,
+                  opacity: isAuthBusy ? 0.65 : 1,
+                },
+              ]}
+              onPress={handleGoogleContinue}
+              disabled={isAuthBusy}
+            >
+              {isGoogleSubmitting ? (
+                <ActivityIndicator color={colors.text} />
+              ) : (
+                <>
+                  <MaterialIcons name="g-translate" size={20} color={colors.text} />
+                  <Text style={[styles.googleButtonText, { color: colors.text }]}>Continue with Google</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </>
+
           {/* Toggle Login/Register */}
           <View style={styles.toggleContainer}>
             <Text style={styles.toggleText}>
               {isLogin ? "Don't have an account? " : 'Already have an account? '}
             </Text>
             <TouchableOpacity onPress={() => setIsLogin(!isLogin)}>
-              <Text style={styles.toggleLink}>
+              <Text style={[styles.toggleLink, { color: colors.primary }]}>
                 {isLogin ? 'Sign Up' : 'Sign In'}
               </Text>
             </TouchableOpacity>
@@ -474,7 +541,6 @@ const styles = StyleSheet.create({
     color: '#374151',
     marginBottom: 8,
   },
-<<<<<<< HEAD
   input: {
     backgroundColor: '#F9FAFB',
     borderWidth: 1,
@@ -501,8 +567,6 @@ const styles = StyleSheet.create({
     top: 14,
     padding: 4,
   },
-=======
->>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540
   forgotPassword: {
     alignItems: 'flex-end',
     marginBottom: 16,
@@ -524,6 +588,40 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
   },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#E5E7EB',
+  },
+  dividerText: {
+    marginHorizontal: 10,
+    color: '#6B7280',
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+  },
+  googleButton: {
+    marginTop: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#FFFFFF',
+    padding: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  googleButtonText: {
+    color: '#111827',
+    fontSize: 16,
+    fontWeight: '700',
+  },
   toggleContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -544,8 +642,4 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 24,
   },
-<<<<<<< HEAD
 });
-=======
-});
->>>>>>> 453bb7ee536ad151fc616cb05397322be4ce0540

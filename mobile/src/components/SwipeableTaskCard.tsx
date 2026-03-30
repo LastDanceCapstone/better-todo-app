@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
 import { View, Text, StyleSheet, Animated, TouchableOpacity } from 'react-native';
+import { useTheme } from '../theme';
 import { Swipeable } from 'react-native-gesture-handler';
 import { MaterialIcons } from '@expo/vector-icons';
 import SubtaskProgress from './SubtaskProgress';
@@ -31,6 +32,7 @@ export default function SwipeableTaskCard({
   formatDueDate,
   formatDisplayDate,
 }: SwipeableTaskCardProps) {
+  const { colors } = useTheme();
   const swipeableRef = useRef<Swipeable>(null);
 
   // Right swipe action (for ACTIVE tasks -> mark as COMPLETED)
@@ -45,10 +47,10 @@ export default function SwipeableTaskCard({
     });
 
     return (
-      <View style={styles.rightAction}>
+      <View style={[styles.rightAction, { backgroundColor: colors.success }]}>
         <Animated.View style={[styles.actionContent, { transform: [{ scale }] }]}>
-          <MaterialIcons name="check-circle" size={32} color="#FFFFFF" />
-          <Text style={styles.actionText}>Complete</Text>
+          <MaterialIcons name="check-circle" size={32} color={colors.text} />
+          <Text style={[styles.actionText, { color: colors.text }]}>Complete</Text>
         </Animated.View>
       </View>
     );
@@ -66,10 +68,10 @@ export default function SwipeableTaskCard({
     });
 
     return (
-      <View style={styles.leftAction}>
+      <View style={[styles.leftAction, { backgroundColor: colors.primary }]}>
         <Animated.View style={[styles.actionContent, { transform: [{ scale }] }]}>
-          <MaterialIcons name="undo" size={32} color="#FFFFFF" />
-          <Text style={styles.actionText}>Reactivate</Text>
+          <MaterialIcons name="undo" size={32} color={colors.text} />
+          <Text style={[styles.actionText, { color: colors.text }]}>Reactivate</Text>
         </Animated.View>
       </View>
     );
@@ -95,7 +97,7 @@ export default function SwipeableTaskCard({
       leftThreshold={80}
     >
       <TouchableOpacity
-        style={styles.taskCard}
+        style={[styles.taskCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
         onPress={onPress}
         activeOpacity={0.7}
       >
@@ -110,25 +112,25 @@ export default function SwipeableTaskCard({
 
         {/* Task Content */}
         <View>
-          <Text style={styles.taskTitle}>{task.title}</Text>
-          <Text style={styles.taskDescription}>
+          <Text style={[styles.taskTitle, { color: colors.text }]}>{task.title}</Text>
+          <Text style={[styles.taskDescription, { color: colors.mutedText }]}>
             {task.description || 'No description'}
           </Text>
         </View>
 
         {/* Black Line */}
-        <View style={styles.separator} />
+        <View style={[styles.separator, { backgroundColor: colors.border }]} />
 
         {/* Bottom Section */}
         <View style={styles.taskFooter}>
           {/* Left side: Days left */}
           <View style={styles.dateInfo}>
-            <MaterialIcons name="access-time" size={16} color="grey" />
-            <Text style={styles.timeLeft}>{formatDueDate(task.dueAt)}</Text>
+            <MaterialIcons name="access-time" size={16} color={colors.mutedText} />
+            <Text style={[styles.timeLeft, { color: colors.mutedText }]}>{formatDueDate(task.dueAt)}</Text>
           </View>
 
           {/* Right side: Due date */}
-          <Text style={styles.dueDate}>
+          <Text style={[styles.dueDate, { color: colors.text }]}>
             Due: {formatDisplayDate(task.dueAt)}
           </Text>
         </View>
@@ -136,7 +138,7 @@ export default function SwipeableTaskCard({
         {/* Subtask Progress Circle */}
         {task.subtasks && task.subtasks.length > 0 && (
           <View style={styles.progressContainer}>
-            <SubtaskProgress subtasks={task.subtasks} size={50} strokeWidth={4} />
+            <SubtaskProgress subtasks={task.subtasks} height={7} slantDegrees={-8} showLabel />
           </View>
         )}
       </TouchableOpacity>
@@ -199,6 +201,7 @@ const styles = StyleSheet.create({
   },
   progressContainer: {
     marginTop: 16,
+    width: '33%',
     alignSelf: 'flex-start',
     paddingTop: 8,
   },
