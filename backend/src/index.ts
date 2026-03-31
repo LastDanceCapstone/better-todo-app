@@ -13,9 +13,22 @@ const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
 // Middleware
-app.use(cors());
-app.use(express.json());
+const allowedOrigins = (process.env.FRONTEND_URLS || '').split(',');
 
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like Postman)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error(`CORS policy: Origin ${origin} not allowed`));
+    }
+  },
+  credentials: true, // allow cookies/auth headers
+}));
+app.use(express.json());
 
 // Debug: Log what's in the swagger spec
 console.log('=== SWAGGER SPEC CHECK ===');

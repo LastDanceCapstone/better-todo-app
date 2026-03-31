@@ -7,6 +7,8 @@ import {
   getUserNotifications,
   markNotificationAsRead,
 } from '../services/notifications';
+import { PrismaClient } from '@prisma/client';
+const prisma = new PrismaClient();
 
 const router = Router();
 
@@ -192,3 +194,58 @@ router.patch('/notifications/:id/read', authenticateToken, async (req: any, res)
 });
 
 export default router;
+// GET notification settings
+router.get('/settings', authenticateToken, async (req: any, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    // Fetch from Prisma
+    let settings = await prisma.notificationSettings.findUnique({
+      where: { userId },
+    });
+
+    // If no settings exist yet, create default
+    if (!settings) {
+      settings = await prisma.notificationSettings.create({
+        data: {
+          userId,
+          morningOverview: false,
+          eveningReview: false,
+          taskDueReminders: false,
+          overdueTaskAlerts: false,
+        },
+      });
+    }
+
+    return res.json(settings);
+  } catch (error) {
+    console.error('GET /notifications/settings error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PUT update notification settings
+router.put('/settings', authenticateToken, async (req: any, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const newSettings = req.body;
+
+    const updated = await prisma.notificationSettings.update({
+      where: { userId },
+      data: {
+        morningOverview: newSettings.morningOverview,
+        eveningReview: newSettings.eveningReview,
+        taskDueReminders: newSettings.taskDueReminders,
+        overdueTaskAlerts: newSettings.overdueTaskAlerts,
+      },
+    });
+
+    return res.json(updated);
+  } catch (error) {
+    console.error('PUT /notifications/settings error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});

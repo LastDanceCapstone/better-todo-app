@@ -21,6 +21,7 @@ model User {
   updatedAt DateTime @updatedAt
   tasks     Task[]
   notifications Notification[]
+  notificationSettings NotificationSettings?
 
   @@map("users")
 }
@@ -102,4 +103,15 @@ model Notification {
   user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("notifications")
+}
+
+model NotificationSettings {
+  id                String  @id @default(uuid())
+  userId            String  @unique
+  morningOverview   Boolean @default(false)
+  eveningReview     Boolean @default(false)
+  taskDueReminders  Boolean @default(false)
+  overdueTaskAlerts Boolean @default(false)
+
+  user User @relation(fields: [userId], references: [id])
 }
