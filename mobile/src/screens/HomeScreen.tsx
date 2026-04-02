@@ -1,39 +1,13 @@
 // src/screens/HomeScreen.tsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, FlatList, StyleSheet, Alert, ActivityIndicator, Image } from 'react-native';
+import { View, Text, TouchableOpacity, FlatList, StyleSheet, Alert, ActivityIndicator, Image, Animated, Easing } from 'react-native';
 import { useTheme } from '../theme';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import SwipeableTaskCard from '../components/SwipeableTaskCard';
-import { getTasks, updateTask } from '../config/api';
-
-type Task = {
-  id: string;
-  title: string;
-  description?: string;
-  dueAt?: string;
-  completedAt?: string;
-  statusChangedAt?: string;
-  status: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
-  priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
-  createdAt: string;
-  updatedAt: string;
-  userId: string;
-  subtasks?: Subtask[];
-};
-
-type Subtask = {
-  id: string;
-  title: string;
-  description?: string;
-  status: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
-  completedAt?: string;
-  createdAt: string;
-  updatedAt: string;
-  taskId: string;
-};
+import { getTasks, updateTask, getNotifications, Task } from '../config/api';
 
 export default function HomeScreen({ route, navigation }: any) {
   const { colors } = useTheme();
@@ -42,6 +16,15 @@ export default function HomeScreen({ route, navigation }: any) {
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<any>(null);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [feedbackText, setFeedbackText] = useState<string | null>(null);
+  const [transitioningTaskId, setTransitioningTaskId] = useState<string | null>(null);
+  const feedbackOpacity = useState(() => new Animated.Value(0))[0];
+  const feedbackTranslateY = useState(() => new Animated.Value(-8))[0];
+  const feedbackScale = useState(() => new Animated.Value(0.98))[0];
+  const avatarScale = useState(() => new Animated.Value(1))[0];
+  const notificationScale = useState(() => new Animated.Value(1))[0];
+  const notificationBadgeScale = useState(() => new Animated.Value(1))[0];
 
   // Get user data from route params or AsyncStorage
   useEffect(() => {
@@ -65,14 +48,43 @@ export default function HomeScreen({ route, navigation }: any) {
     getUserData();
   }, [route]);
 
-  // Load avatar when screen comes into focus
+  // Load avatar and unread notification count when screen comes into focus
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
       loadAvatar();
+      loadUnreadCount();
     });
 
     return unsubscribe;
   }, [navigation]);
+
+  const loadUnreadCount = async () => {
+    try {
+      const notifications = await getNotifications();
+      setUnreadCount(notifications.filter((n) => !n.isRead).length);
+    } catch {
+      // Non-critical — silently ignore
+    }
+  };
+
+  useEffect(() => {
+    if (unreadCount <= 0) return;
+
+    Animated.sequence([
+      Animated.timing(notificationBadgeScale, {
+        toValue: 1.14,
+        duration: 140,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(notificationBadgeScale, {
+        toValue: 1,
+        duration: 160,
+        easing: Easing.inOut(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [unreadCount, notificationBadgeScale]);
 
   const loadAvatar = async () => {
     try {
@@ -101,21 +113,95 @@ export default function HomeScreen({ route, navigation }: any) {
 
   // Handle status change
   const handleStatusChange = async (taskId: string, newStatus: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED') => {
+    const previousTask = tasks.find((task) => task.id === taskId);
+
+    const showFeedback = (message: string) => {
+      setFeedbackText(message);
+      Animated.sequence([
+        Animated.parallel([
+          Animated.timing(feedbackOpacity, {
+            toValue: 1,
+            duration: 220,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(feedbackTranslateY, {
+            toValue: 0,
+            duration: 220,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(feedbackScale, {
+            toValue: 1,
+            duration: 220,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.delay(1050),
+        Animated.parallel([
+          Animated.timing(feedbackOpacity, {
+            toValue: 0,
+            duration: 170,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(feedbackTranslateY, {
+            toValue: -8,
+            duration: 170,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(feedbackScale, {
+            toValue: 0.985,
+            duration: 170,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ]),
+      ]).start(({ finished }) => {
+        if (finished) {
+          setFeedbackText(null);
+          feedbackScale.setValue(0.98);
+        }
+      });
+    };
+
     try {
       const completedAt = newStatus === 'COMPLETED' ? new Date().toISOString() : null;
       // Use shared update helper so sync hooks stay centralized.
       await updateTask(taskId, { status: newStatus, completedAt });
 
-      setTasks(prevTasks =>
-        prevTasks.map(task =>
-          task.id === taskId ? { ...task, status: newStatus, completedAt: completedAt || undefined } : task
-        )
-      );
+      // Add a brief transition phase so cards don't disappear too abruptly between tabs.
+      const crossesTabBoundary =
+        (tab === 'TODO' && newStatus === 'COMPLETED') ||
+        (tab === 'COMPLETED' && newStatus !== 'COMPLETED');
 
-      Alert.alert(
-        'Success',
-        `Task ${newStatus === 'COMPLETED' ? 'completed' : 'updated'} successfully!`
-      );
+      if (crossesTabBoundary) {
+        setTransitioningTaskId(taskId);
+        setTimeout(() => {
+          setTasks((prevTasks) =>
+            prevTasks.map((task) =>
+              task.id === taskId ? { ...task, status: newStatus, completedAt: completedAt || undefined } : task
+            )
+          );
+          setTransitioningTaskId((current) => (current === taskId ? null : current));
+        }, 220);
+      } else {
+        setTasks((prevTasks) =>
+          prevTasks.map((task) =>
+            task.id === taskId ? { ...task, status: newStatus, completedAt: completedAt || undefined } : task
+          )
+        );
+      }
+
+      if (newStatus === 'COMPLETED') {
+        showFeedback('Task completed');
+      } else if (previousTask?.status === 'COMPLETED' && newStatus === 'TODO') {
+        showFeedback('Task moved back to active');
+      } else {
+        showFeedback('Task updated');
+      }
     } catch (error) {
       console.error('Error updating task status:', error);
       Alert.alert('Error', 'Failed to update task status');
@@ -219,10 +305,26 @@ export default function HomeScreen({ route, navigation }: any) {
         {/* Hero Header */}
         <View style={[styles.heroHeader, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <View style={styles.headerContent}>
+            <Animated.View style={{ transform: [{ scale: avatarScale }] }}>
             <TouchableOpacity
               style={styles.avatarTouchable}
               onPress={() => navigation.navigate('Account')}
-              activeOpacity={0.7}
+              activeOpacity={0.85}
+              onPressIn={() => {
+                Animated.timing(avatarScale, {
+                  toValue: 0.96,
+                  duration: 90,
+                  useNativeDriver: true,
+                }).start();
+              }}
+              onPressOut={() => {
+                Animated.timing(avatarScale, {
+                  toValue: 1,
+                  duration: 120,
+                  easing: Easing.out(Easing.cubic),
+                  useNativeDriver: true,
+                }).start();
+              }}
             >
               {avatarUri ? (
                 <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
@@ -232,6 +334,7 @@ export default function HomeScreen({ route, navigation }: any) {
                 </View>
               )}
             </TouchableOpacity>
+            </Animated.View>
 
             <View style={styles.greetingContainer}>
               <Text style={[styles.greeting, { color: colors.mutedText }]}>{getGreeting()}</Text>
@@ -239,13 +342,43 @@ export default function HomeScreen({ route, navigation }: any) {
               <Text style={[styles.subtitle, { color: colors.mutedText }]}>Let's make progress today.</Text>
             </View>
 
+            <Animated.View style={{ transform: [{ scale: notificationScale }] }}>
             <TouchableOpacity
               style={[styles.notificationButton, { backgroundColor: colors.background, borderColor: colors.border }]}
-              onPress={() => alert('Notifications clicked!')}
-              activeOpacity={0.7}
+              onPress={() => navigation.navigate('Notifications')}
+              activeOpacity={0.85}
+              onPressIn={() => {
+                Animated.timing(notificationScale, {
+                  toValue: 0.95,
+                  duration: 90,
+                  useNativeDriver: true,
+                }).start();
+              }}
+              onPressOut={() => {
+                Animated.timing(notificationScale, {
+                  toValue: 1,
+                  duration: 120,
+                  easing: Easing.out(Easing.cubic),
+                  useNativeDriver: true,
+                }).start();
+              }}
             >
               <MaterialIcons name="notifications" size={22} color={colors.text} />
+              {unreadCount > 0 && (
+                <Animated.View
+                  style={[
+                    styles.notificationBadge,
+                    { backgroundColor: colors.danger },
+                    { transform: [{ scale: notificationBadgeScale }] },
+                  ]}
+                >
+                  <Text style={[styles.notificationBadgeText, { color: colors.surface }]}>
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </Text>
+                </Animated.View>
+              )}
             </TouchableOpacity>
+            </Animated.View>
           </View>
         </View>
         {/* Tabs */}
@@ -254,7 +387,7 @@ export default function HomeScreen({ route, navigation }: any) {
             <TouchableOpacity
               style={[
                 styles.tab,
-                tab === 'TODO' && [styles.tabActive, { backgroundColor: colors.primary, shadowColor: colors.primary }],
+                tab === 'TODO' && [styles.tabActive, { backgroundColor: `${colors.primary}E6`, shadowColor: colors.primary }],
               ]}
               onPress={() => setTab('TODO')}
               activeOpacity={0.7}
@@ -282,7 +415,7 @@ export default function HomeScreen({ route, navigation }: any) {
             <TouchableOpacity
               style={[
                 styles.tab,
-                tab === 'COMPLETED' && [styles.tabActive, { backgroundColor: colors.primary, shadowColor: colors.primary }],
+                tab === 'COMPLETED' && [styles.tabActive, { backgroundColor: `${colors.primary}E6`, shadowColor: colors.primary }],
               ]}
               onPress={() => setTab('COMPLETED')}
               activeOpacity={0.7}
@@ -309,6 +442,23 @@ export default function HomeScreen({ route, navigation }: any) {
           </View>
         </View>
 
+        {feedbackText ? (
+          <Animated.View
+            style={[
+              styles.feedbackBanner,
+              {
+                backgroundColor: `${colors.success}22`,
+                borderColor: `${colors.success}55`,
+                opacity: feedbackOpacity,
+                transform: [{ translateY: feedbackTranslateY }, { scale: feedbackScale }],
+              },
+            ]}
+          >
+            <MaterialIcons name="check-circle" size={16} color={colors.success} />
+            <Text style={[styles.feedbackText, { color: colors.text }]}>{feedbackText}</Text>
+          </Animated.View>
+        ) : null}
+
         <View style={styles.sectionHeader}>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>Your Tasks</Text>
         </View>
@@ -325,8 +475,8 @@ export default function HomeScreen({ route, navigation }: any) {
             </Text>
             <Text style={[styles.emptySubtext, { color: colors.mutedText }]}>
               {tab === 'TODO'
-                ? 'Create your first task to get started'
-                : 'Complete some tasks to see them here'}
+                ? 'You are all clear. Create a task to start momentum.'
+                : 'Finished tasks will appear here as you complete them.'}
             </Text>
             {tab === 'TODO' && (
               <TouchableOpacity
@@ -353,6 +503,7 @@ export default function HomeScreen({ route, navigation }: any) {
                 onStatusChange={handleStatusChange}
                 formatDueDate={formatDueDate}
                 formatDisplayDate={formatDisplayDate}
+                isTransitioning={transitioningTaskId === item.id}
               />
             )}
           />
@@ -383,8 +534,8 @@ const styles = StyleSheet.create({
   // Hero header
   heroHeader: {
     paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 20,
+    paddingTop: 14,
+    paddingBottom: 18,
     borderBottomWidth: 1,
     overflow: 'hidden',
   },
@@ -418,20 +569,20 @@ const styles = StyleSheet.create({
 
   greetingContainer: {
     flex: 1,
-    marginLeft: 16,
+    marginLeft: 14,
     justifyContent: 'center',
   },
   greeting: {
-    fontSize: 13,
-    marginBottom: 2,
+    fontSize: 12,
     fontWeight: '500',
+    marginBottom: 2,
   },
   welcome: {
-    fontSize: 22,
+    fontSize: 21,
     fontWeight: '700',
   },
   subtitle: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '500',
     marginTop: 2,
   },
@@ -445,16 +596,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
   },
+  notificationBadge: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    minWidth: 17,
+    height: 17,
+    borderRadius: 9,
+    paddingHorizontal: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notificationBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+  },
 
   // Tabs
   tabsSection: {
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingTop: 14,
+    paddingBottom: 12,
   },
   tabsContainer: {
     flexDirection: 'row',
     borderRadius: 14,
-    padding: 4,
+    padding: 3,
     borderWidth: 1,
   },
   tab: {
@@ -463,41 +630,62 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 10,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     borderRadius: 10,
     gap: 6,
   },
   tabActive: {
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOpacity: 0.12,
+    shadowRadius: 3,
+    elevation: 2,
   },
   tabText: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600',
   },
   tabTextActive: {
   },
   tabCount: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 12,
+    fontWeight: '700',
   },
   tabCountActive: {
   },
 
   sectionHeader: {
     paddingHorizontal: 20,
-    paddingBottom: 6,
+    paddingTop: 2,
+    paddingBottom: 8,
+  },
+  feedbackBanner: {
+    marginHorizontal: 20,
+    marginBottom: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 13,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  feedbackText: {
+    marginLeft: 8,
+    fontSize: 13,
+    fontWeight: '600',
   },
   sectionTitle: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '700',
   },
 
   // Task list
   taskListContent: {
-    paddingTop: 6,
+    paddingTop: 4,
     paddingBottom: 120,
   },
 
@@ -510,23 +698,28 @@ const styles = StyleSheet.create({
     paddingBottom: 120,
   },
   emptyText: {
-    fontSize: 18,
+    fontSize: 19,
     fontWeight: '600',
-    marginTop: 20,
+    marginTop: 18,
     textAlign: 'center',
   },
   emptySubtext: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '400',
-    marginTop: 8,
+    marginTop: 10,
     textAlign: 'center',
-    lineHeight: 22,
+    lineHeight: 21,
   },
   primaryCta: {
-    marginTop: 18,
-    paddingHorizontal: 18,
-    paddingVertical: 12,
+    marginTop: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 13,
     borderRadius: 999,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.14,
+    shadowRadius: 6,
+    elevation: 2,
   },
   primaryCtaText: {
     fontSize: 14,

@@ -317,13 +317,13 @@ export default function AccountDetailsScreen({ navigation }: any) {
       id: 'account',
       icon: 'person',
       label: 'Account',
-      onPress: () => console.log('TODO: Navigate to Account settings'),
+      onPress: () => navigation.navigate('AccountSettings'),
     },
     {
       id: 'general',
       icon: 'settings',
       label: 'General',
-      onPress: () => console.log('TODO: Navigate to General settings'),
+      onPress: () => navigation.navigate('GeneralSettings'),
     },
     {
       id: 'calendar',
@@ -342,7 +342,13 @@ export default function AccountDetailsScreen({ navigation }: any) {
       id: 'notifications',
       icon: 'notifications',
       label: 'Notifications',
-      onPress: () => console.log('TODO: Navigate to Notifications settings'),
+      onPress: () => navigation.navigate('NotificationSettings'),
+    },
+    {
+      id: 'analytics',
+      icon: 'insights',
+      label: 'Analytics',
+      onPress: () => navigation.navigate('Analytics'),
     },
   ];
 

@@ -56,6 +56,8 @@ export default function SubtaskProgress({
             height,
             borderRadius: height / 2,
             backgroundColor: trackColor,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: '#000000',
             transform: [{ skewX: `${slantDegrees}deg` }],
           },
         ]}

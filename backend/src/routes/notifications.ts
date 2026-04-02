@@ -50,14 +50,13 @@ const authenticateToken = (req: any, res: any, next: any) => {
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 notifications:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/Notification'
+ *               $ref: '#/components/schemas/NotificationListResponse'
  *       401:
  *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.get('/notifications', authenticateToken, async (req: any, res) => {
   try {
@@ -85,28 +84,26 @@ router.get('/notifications', authenticateToken, async (req: any, res) => {
  *       content:
  *         application/json:
  *           schema:
- *             type: object
- *             required:
- *               - type
- *               - title
- *               - message
- *             properties:
- *               type:
- *                 type: string
- *                 enum: [TASK_DUE_SOON, TASK_OVERDUE, MORNING_OVERVIEW, EVENING_REVIEW]
- *               title:
- *                 type: string
- *                 example: Task due soon
- *               message:
- *                 type: string
- *                 example: "Your task 'Sprint Review' is due in 1 hour."
+ *             $ref: '#/components/schemas/NotificationCreateRequest'
  *     responses:
  *       201:
  *         description: Notification created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/NotificationResponse'
  *       400:
  *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  *       401:
  *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.post('/notifications', authenticateToken, async (req: any, res) => {
   try {
@@ -160,12 +157,28 @@ router.post('/notifications', authenticateToken, async (req: any, res) => {
  *     responses:
  *       200:
  *         description: Notification marked as read
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/NotificationResponse'
  *       403:
  *         description: Forbidden — notification belongs to another user
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  *       404:
  *         description: Notification not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  *       401:
  *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.patch('/notifications/:id/read', authenticateToken, async (req: any, res) => {
   try {

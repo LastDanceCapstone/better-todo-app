@@ -261,6 +261,7 @@ router.post('/login', async (req, res) => {
  *         description: Invalid token or unverified email
  */
 router.post('/auth/google', async (req, res) => {
+    console.log('Google auth route hit');
     try {
         const idToken = typeof req.body?.idToken === 'string' ? req.body.idToken.trim() : '';
         if (!idToken) {
@@ -469,6 +470,7 @@ router.get('/user/profile', authenticateToken, async (req, res) => {
                 firstName: true,
                 lastName: true,
                 email: true,
+                authProvider: true,
                 createdAt: true,
             },
         });
@@ -480,6 +482,88 @@ router.get('/user/profile', authenticateToken, async (req, res) => {
     catch (error) {
         console.error('Profile error:', error);
         res.status(500).json({ error: 'Internal server error' });
+    }
+});
+/**
+ * @swagger
+ * /user/profile:
+ *   patch:
+ *     tags: [Authentication]
+ *     summary: Update current user profile
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               firstName:
+ *                 type: string
+ *               lastName:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Profile updated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 user:
+ *                   $ref: '#/components/schemas/User'
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+router.patch('/user/profile', authenticateToken, async (req, res) => {
+    try {
+        const { firstName, lastName } = req.body;
+        const updateData = {};
+        if (typeof firstName === 'string') {
+            const trimmed = firstName.trim();
+            if (trimmed.length === 0 || trimmed.length > 100) {
+                return res.status(400).json({ error: 'First name must be between 1 and 100 characters' });
+            }
+            updateData.firstName = trimmed;
+        }
+        if (typeof lastName === 'string') {
+            const trimmed = lastName.trim();
+            if (trimmed.length === 0 || trimmed.length > 100) {
+                return res.status(400).json({ error: 'Last name must be between 1 and 100 characters' });
+            }
+            updateData.lastName = trimmed;
+        }
+        if (Object.keys(updateData).length === 0) {
+            return res.status(400).json({ error: 'No valid fields to update' });
+        }
+        const user = await prisma_1.prisma.user.update({
+            where: { id: req.user.userId },
+            data: updateData,
+            select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                authProvider: true,
+                createdAt: true,
+            },
+        });
+        return res.json({ user });
+    }
+    catch (error) {
+        console.error('Update profile error:', error);
+        return res.status(500).json({ error: 'Internal server error' });
     }
 });
 exports.default = router;

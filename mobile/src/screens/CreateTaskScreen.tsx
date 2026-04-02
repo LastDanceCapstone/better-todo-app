@@ -19,7 +19,11 @@ import { useTheme } from '../theme';
 import { MaterialIcons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { useFocusEffect } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_BASE_URL, ApiError, createTask, getAuthToken, parseTask, type ParsedTaskResponse } from '../config/api';
+import { DEFAULT_PRIORITY_KEY } from './GeneralSettingsScreen';
+import AppInput from '../components/AppInput';
+import AppButton from '../components/AppButton';
 
 type Priority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
 type Status = 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
@@ -116,9 +120,57 @@ export default function CreateTaskScreen({ navigation, route }: any) {
   const [aiInput, setAiInput] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [formNoticeMessage, setFormNoticeMessage] = useState<string | null>(null);
   const prefillKeyRef = useRef<string | null>(null);
+  const noticeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const modalOpacity = useRef(new Animated.Value(0)).current;
   const modalTranslateY = useRef(new Animated.Value(40)).current;
+  const aiModalOpacity = useRef(new Animated.Value(0)).current;
+  const aiModalTranslateY = useRef(new Animated.Value(20)).current;
+  const noticeOpacity = useRef(new Animated.Value(0)).current;
+  const noticeTranslateY = useRef(new Animated.Value(-8)).current;
+
+  const clearNoticeTimer = React.useCallback(() => {
+    if (noticeTimeoutRef.current) {
+      clearTimeout(noticeTimeoutRef.current);
+      noticeTimeoutRef.current = null;
+    }
+  }, []);
+
+  const closeAiAssistModal = React.useCallback(() => {
+    Animated.parallel([
+      Animated.timing(aiModalOpacity, { toValue: 0, duration: 160, useNativeDriver: true }),
+      Animated.timing(aiModalTranslateY, { toValue: 20, duration: 160, useNativeDriver: true }),
+    ]).start(() => {
+      setShowAiAssistModal(false);
+    });
+  }, [aiModalOpacity, aiModalTranslateY]);
+
+  const showFormNotice = React.useCallback(
+    (message: string, duration = 1300, onComplete?: () => void) => {
+      clearNoticeTimer();
+      setFormNoticeMessage(message);
+      noticeOpacity.setValue(0);
+      noticeTranslateY.setValue(-8);
+
+      Animated.parallel([
+        Animated.timing(noticeOpacity, { toValue: 1, duration: 180, useNativeDriver: true }),
+        Animated.timing(noticeTranslateY, { toValue: 0, duration: 180, useNativeDriver: true }),
+      ]).start();
+
+      noticeTimeoutRef.current = setTimeout(() => {
+        Animated.parallel([
+          Animated.timing(noticeOpacity, { toValue: 0, duration: 160, useNativeDriver: true }),
+          Animated.timing(noticeTranslateY, { toValue: -8, duration: 160, useNativeDriver: true }),
+        ]).start(() => {
+          setFormNoticeMessage(null);
+          onComplete?.();
+        });
+        noticeTimeoutRef.current = null;
+      }, duration);
+    },
+    [clearNoticeTimer, noticeOpacity, noticeTranslateY]
+  );
 
   const resetForm = React.useCallback(() => {
     setTitle('');
@@ -137,17 +189,59 @@ export default function CreateTaskScreen({ navigation, route }: any) {
     setShowAiAssistModal(false);
     setAiInput('');
     setAiError(null);
+    setFormNoticeMessage(null);
 
     setAiLoading(false);
     setIsSubmitting(false);
     prefillKeyRef.current = null;
 
+    clearNoticeTimer();
+
     modalOpacity.setValue(0);
     modalTranslateY.setValue(40);
-  }, [modalOpacity, modalTranslateY]);
+    aiModalOpacity.setValue(0);
+    aiModalTranslateY.setValue(20);
+    noticeOpacity.setValue(0);
+    noticeTranslateY.setValue(-8);
+  }, [
+    aiModalOpacity,
+    aiModalTranslateY,
+    clearNoticeTimer,
+    modalOpacity,
+    modalTranslateY,
+    noticeOpacity,
+    noticeTranslateY,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      clearNoticeTimer();
+    };
+  }, [clearNoticeTimer]);
+
+  useEffect(() => {
+    if (!showAiAssistModal) return;
+    aiModalOpacity.setValue(0);
+    aiModalTranslateY.setValue(20);
+    requestAnimationFrame(() => {
+      Animated.parallel([
+        Animated.timing(aiModalOpacity, { toValue: 1, duration: 220, useNativeDriver: true }),
+        Animated.timing(aiModalTranslateY, { toValue: 0, duration: 220, useNativeDriver: true }),
+      ]).start();
+    });
+  }, [showAiAssistModal, aiModalOpacity, aiModalTranslateY]);
 
   useFocusEffect(
     React.useCallback(() => {
+      // Apply the user's stored default priority when entering the screen
+      AsyncStorage.getItem(DEFAULT_PRIORITY_KEY)
+        .then((stored) => {
+          if (stored && ['LOW', 'MEDIUM', 'HIGH', 'URGENT'].includes(stored)) {
+            setPriority(stored as Priority);
+          }
+        })
+        .catch(() => {});
+
       return () => {
         resetForm();
       };
@@ -198,9 +292,10 @@ export default function CreateTaskScreen({ navigation, route }: any) {
       setPriority(mapPriority(parsed.priority, aiInput));
       applyParsedSubtasks(parsed.subtasks);
 
-      setShowAiAssistModal(false);
+      closeAiAssistModal();
       setAiInput('');
       setAiError(null);
+      showFormNotice('AI suggestions applied. Review and create when ready.', 1500);
     } catch (error: any) {
       if (error instanceof ApiError) {
         if (error.status === 422 && error.issues?.length) {
@@ -481,22 +576,16 @@ export default function CreateTaskScreen({ navigation, route }: any) {
         }
       }
 
+      const successMessage = hasSubtasks
+        ? 'Task and subtasks created. Taking you to Home...'
+        : 'Task created. Taking you to Home...';
+
       // Clear form
       resetForm();
-      
-      // Show success message
-      Alert.alert(
-        'Success',
-        hasSubtasks
-          ? 'Task created with subtasks!'
-          : 'Task created successfully!',
-        [
-          {
-            text: 'OK',
-            onPress: () => navigation.navigate('Home', { refresh: true }),
-          },
-        ]
-      );
+
+      showFormNotice(successMessage, 850, () => {
+        navigation.navigate('Home', { refresh: true });
+      });
     } catch (error) {
       if (error instanceof ApiError) {
         if (error.status === 401) {
@@ -517,11 +606,11 @@ export default function CreateTaskScreen({ navigation, route }: any) {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Header - Card-like with soft background, subtle shadow */}
+      {/* Header */}
       <View style={[styles.headerContainer, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <Text style={[styles.headerTitle, { color: colors.text }]}>Create Task</Text>
         <Text style={[styles.headerSubtitle, { color: colors.mutedText }]}>
-          Add a new task, set priority, status, and due date.
+          Capture what matters and set it up clearly.
         </Text>
       </View>
 
@@ -530,8 +619,28 @@ export default function CreateTaskScreen({ navigation, route }: any) {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
+        {formNoticeMessage ? (
+          <Animated.View
+            style={[
+              styles.formNotice,
+              { backgroundColor: colors.primary + '12', borderColor: colors.primary + '34' },
+              { opacity: noticeOpacity, transform: [{ translateY: noticeTranslateY }] },
+            ]}
+          >
+            <MaterialIcons name="check-circle" size={16} color={colors.primary} />
+            <Text style={[styles.formNoticeText, { color: colors.text }]}>{formNoticeMessage}</Text>
+          </Animated.View>
+        ) : null}
+
         <TouchableOpacity
-          style={[styles.aiAssistButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+          style={[
+            styles.aiAssistButton,
+            {
+              backgroundColor: colors.surface,
+              borderColor: colors.primary + '2D',
+              shadowColor: colors.primary,
+            },
+          ]}
           onPress={() => {
             setShowAiAssistModal(true);
             setAiError(null);
@@ -541,34 +650,37 @@ export default function CreateTaskScreen({ navigation, route }: any) {
           <View style={[styles.aiAssistIconWrap, { backgroundColor: colors.primary + '1A' }]}>
             <MaterialIcons name="auto-awesome" size={18} color={colors.primary} />
           </View>
-          <Text style={[styles.aiAssistText, { color: colors.text }]}>AI Assist</Text>
+          <View style={styles.aiAssistBody}>
+            <Text style={[styles.aiAssistText, { color: colors.text }]}>AI Assist</Text>
+            <Text style={[styles.aiAssistHint, { color: colors.mutedText }]}>Describe naturally and auto-fill the form</Text>
+          </View>
+          <MaterialIcons name="chevron-right" size={20} color={colors.mutedText} />
         </TouchableOpacity>
 
         {/* Title Field */}
         <View style={styles.field}>
-          <Text style={[styles.label, { color: colors.text }]}>Task Title</Text>
-          <TextInput
-            style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text }]}
+          <AppInput
+            label="Task Title"
             placeholder="e.g., Complete Math Homework"
-            placeholderTextColor={colors.mutedText}
             value={title}
             onChangeText={setTitle}
             editable={!isSubmitting}
+            containerStyle={styles.appInputContainer}
           />
         </View>
 
         {/* Description Field */}
         <View style={styles.field}>
-          <Text style={[styles.label, { color: colors.text }]}>Description</Text>
-          <Text style={[styles.helperText, { color: colors.mutedText }]}>Optional</Text>
-          <TextInput
-            style={[styles.input, styles.textArea, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text }]}
+          <AppInput
+            label="Description"
+            helperText="Optional"
             placeholder="Add more details about this task"
-            placeholderTextColor={colors.mutedText}
             value={description}
             onChangeText={setDescription}
             multiline
             editable={!isSubmitting}
+            containerStyle={styles.appInputContainer}
+            inputStyle={styles.textAreaInput}
           />
         </View>
 
@@ -583,35 +695,45 @@ export default function CreateTaskScreen({ navigation, route }: any) {
             accessibilityRole="button"
             accessibilityLabel={dueDate ? `Due date: ${formatDateForDisplayLong(new Date(dueDate))}` : 'Select due date'}
           >
-            <Text
-              style={[
-                styles.dateFieldText,
-                { color: dueDate ? colors.text : colors.mutedText },
-              ]}
-            >
-              {dueDate
-                ? `${formatDateForDisplayLong(new Date(dueDate))} • ${new Date(dueDate).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
-                : 'Select a date'}
-            </Text>
-            <MaterialIcons name="calendar-today" size={20} color={colors.mutedText} />
+            <View style={styles.dateFieldBody}>
+              <View style={[styles.dateFieldIconWrap, { backgroundColor: colors.primary + '14' }]}>
+                <MaterialIcons name="calendar-today" size={16} color={colors.primary} />
+              </View>
+              <View style={styles.dateFieldTextWrap}>
+                <Text
+                  style={[
+                    styles.dateFieldText,
+                    { color: dueDate ? colors.text : colors.mutedText },
+                  ]}
+                >
+                  {dueDate ? formatDateForDisplayLong(new Date(dueDate)) : 'No due date selected'}
+                </Text>
+                <Text style={[styles.dateFieldSubtext, { color: colors.mutedText }]}> 
+                  {dueDate
+                    ? new Date(dueDate).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                    : 'Tap to choose date and time'}
+                </Text>
+              </View>
+            </View>
+            <MaterialIcons name="keyboard-arrow-right" size={22} color={colors.mutedText} />
           </TouchableOpacity>
           <Text style={[styles.helperText, { color: colors.mutedText }]}>Optional - tap to select</Text>
-          <View style={styles.dateQuickActions}>
+          <View style={[styles.dateQuickActions, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
             <TouchableOpacity
               onPress={handleToday}
-              style={[styles.dateQuickActionButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+              style={[styles.dateQuickActionButton, { borderColor: colors.border }]}
             >
               <Text style={[styles.dateQuickActionText, { color: colors.text }]}>Today</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={handleTomorrow}
-              style={[styles.dateQuickActionButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+              style={[styles.dateQuickActionButton, { borderColor: colors.border }]}
             >
               <Text style={[styles.dateQuickActionText, { color: colors.text }]}>Tomorrow</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={handleClearDate}
-              style={[styles.dateQuickActionButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+              style={[styles.dateQuickActionButton, { borderColor: colors.border }]}
             >
               <Text style={[styles.dateQuickActionText, { color: colors.danger }]}>Clear</Text>
             </TouchableOpacity>
@@ -672,25 +794,34 @@ export default function CreateTaskScreen({ navigation, route }: any) {
 
         <Modal
           transparent
-          animationType="fade"
+          animationType="none"
           visible={showAiAssistModal}
-          onRequestClose={() => setShowAiAssistModal(false)}
+          onRequestClose={closeAiAssistModal}
         >
           <View style={styles.modalRoot}>
             <Pressable
-              onPress={() => setShowAiAssistModal(false)}
+              onPress={closeAiAssistModal}
               style={styles.modalBackdropPressable}
             >
-              <View style={styles.modalBackdrop} />
+              <Animated.View style={[styles.modalBackdrop, { opacity: aiModalOpacity }]} />
             </Pressable>
 
-            <View
+            <Animated.View
               style={[
                 styles.aiAssistModalCard,
                 { backgroundColor: colors.surface, borderColor: colors.border },
+                { opacity: aiModalOpacity, transform: [{ translateY: aiModalTranslateY }] },
               ]}
             >
-              <Text style={[styles.aiAssistModalTitle, { color: colors.text }]}>AI Assist</Text>
+              <View style={styles.aiAssistModalHeader}>
+                <View style={[styles.aiAssistModalIcon, { backgroundColor: colors.primary + '16' }]}>
+                  <MaterialIcons name="auto-awesome" size={18} color={colors.primary} />
+                </View>
+                <View style={styles.aiAssistModalTitleWrap}>
+                  <Text style={[styles.aiAssistModalTitle, { color: colors.text }]}>AI Assist</Text>
+                  <Text style={[styles.aiAssistModalSubtitle, { color: colors.mutedText }]}>Turn a quick thought into a structured task</Text>
+                </View>
+              </View>
               <TextInput
                 style={[
                   styles.aiAssistInput,
@@ -714,7 +845,7 @@ export default function CreateTaskScreen({ navigation, route }: any) {
                 <TouchableOpacity
                   style={[styles.aiAssistSecondaryButton, { borderColor: colors.border }]}
                   onPress={() => {
-                    setShowAiAssistModal(false);
+                    closeAiAssistModal();
                     setAiError(null);
                   }}
                   disabled={aiLoading}
@@ -733,7 +864,7 @@ export default function CreateTaskScreen({ navigation, route }: any) {
                   )}
                 </TouchableOpacity>
               </View>
-            </View>
+            </Animated.View>
           </View>
         </Modal>
 
@@ -764,6 +895,7 @@ export default function CreateTaskScreen({ navigation, route }: any) {
                   >
                     {level.charAt(0) + level.slice(1).toLowerCase()}
                   </Text>
+                  {isSelected ? <MaterialIcons name="check" size={14} color={colors.surface} /> : null}
                 </TouchableOpacity>
               );
             })}
@@ -797,55 +929,60 @@ export default function CreateTaskScreen({ navigation, route }: any) {
           {/* Status Dropdown Options */}
           {showStatusPicker && (
             <View style={[styles.dropdownMenu, styles.statusMenu, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
-              {(Object.keys(STATUS_META) as Status[]).map((statusOption) => (
-                <TouchableOpacity
-                  key={statusOption}
-                  style={[
-                    styles.dropdownOption,
-                    status === statusOption && [styles.dropdownOptionActive, { backgroundColor: colors.primary + '15' }],
-                    { borderBottomColor: colors.border, borderBottomWidth: StyleSheet.hairlineWidth },
-                  ]}
-                  onPress={() => {
-                    setStatus(statusOption);
-                    setShowStatusPicker(false);
-                  }}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel={STATUS_META[statusOption].label}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                    <MaterialIcons
-                      name={STATUS_META[statusOption].icon}
-                      size={20}
-                      color={status === statusOption ? colors.primary : colors.mutedText}
-                    />
-                    <View style={{ flex: 1 }}>
-                      <Text
-                        style={[
-                          styles.dropdownOptionText,
-                          status === statusOption && [styles.dropdownOptionTextActive, { color: colors.primary }],
-                          { color: status === statusOption ? colors.primary : colors.text },
-                        ]}
-                      >
-                        {STATUS_META[statusOption].label}
-                      </Text>
-                      {STATUS_META[statusOption].helper ? (
-                        <Text style={[styles.helperText, { color: colors.mutedText, marginTop: 2 }]}> 
-                          {STATUS_META[statusOption].helper}
-                        </Text>
-                      ) : null}
-                    </View>
-                  </View>
-                  <View
+              {(Object.keys(STATUS_META) as Status[]).map((statusOption, index, options) => {
+                const isSelected = status === statusOption;
+                const isLast = index === options.length - 1;
+
+                return (
+                  <TouchableOpacity
+                    key={statusOption}
                     style={[
-                      styles.dropdownCheckWrap,
-                      { opacity: status === statusOption ? 1 : 0 },
+                      styles.dropdownOption,
+                      isSelected && [styles.dropdownOptionActive, { backgroundColor: colors.primary + '15' }],
+                      !isLast && { borderBottomColor: colors.border, borderBottomWidth: StyleSheet.hairlineWidth },
                     ]}
+                    onPress={() => {
+                      setStatus(statusOption);
+                      setShowStatusPicker(false);
+                    }}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel={STATUS_META[statusOption].label}
                   >
-                    <MaterialIcons name="check" size={20} color={colors.primary} />
-                  </View>
-                </TouchableOpacity>
-              ))}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <MaterialIcons
+                        name={STATUS_META[statusOption].icon}
+                        size={20}
+                        color={isSelected ? colors.primary : colors.mutedText}
+                      />
+                      <View style={{ flex: 1 }}>
+                        <Text
+                          style={[
+                            styles.dropdownOptionText,
+                            isSelected && [styles.dropdownOptionTextActive, { color: colors.primary }],
+                            { color: isSelected ? colors.primary : colors.text },
+                          ]}
+                        >
+                          {STATUS_META[statusOption].label}
+                        </Text>
+                        {STATUS_META[statusOption].helper ? (
+                          <Text style={[styles.dropdownHelperText, { color: colors.mutedText }]}> 
+                            {STATUS_META[statusOption].helper}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </View>
+                    <View
+                      style={[
+                        styles.dropdownCheckWrap,
+                        { opacity: isSelected ? 1 : 0 },
+                      ]}
+                    >
+                      <MaterialIcons name="check" size={18} color={colors.primary} />
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           )}
         </View>
@@ -872,8 +1009,13 @@ export default function CreateTaskScreen({ navigation, route }: any) {
         {hasSubtasks && (
           <View style={[styles.subtasksSection, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={styles.subtasksHeaderRow}>
-              <Text style={[styles.subtasksSectionTitle, { color: colors.text }]}>Subtasks</Text>
-              <Text style={[styles.subtasksCount, { color: colors.mutedText }]}>{subtaskInputs.length}</Text>
+              <View>
+                <Text style={[styles.subtasksSectionTitle, { color: colors.text }]}>Subtasks</Text>
+                <Text style={[styles.subtasksSectionHint, { color: colors.mutedText }]}>Break work into clear, actionable steps</Text>
+              </View>
+              <View style={[styles.subtasksCountPill, { backgroundColor: colors.card }]}> 
+                <Text style={[styles.subtasksCount, { color: colors.mutedText }]}>{subtaskInputs.length}</Text>
+              </View>
             </View>
 
             <TouchableOpacity
@@ -893,12 +1035,12 @@ export default function CreateTaskScreen({ navigation, route }: any) {
                   <Text style={[styles.subtaskLabel, { color: colors.mutedText }]}>Subtask {index + 1}</Text>
                   {subtaskInputs.length > 1 && (
                     <TouchableOpacity
-                      style={[styles.removeSubtaskButton, { backgroundColor: colors.danger + '15' }]}
+                      style={[styles.removeSubtaskButton, { backgroundColor: colors.border }]}
                       onPress={() => removeSubtaskInput(subtask.id)}
                       disabled={isSubmitting}
                       activeOpacity={0.7}
                     >
-                      <MaterialIcons name="close" size={20} color={colors.danger} />
+                      <MaterialIcons name="close" size={18} color={colors.mutedText} />
                     </TouchableOpacity>
                   )}
                 </View>
@@ -934,24 +1076,15 @@ export default function CreateTaskScreen({ navigation, route }: any) {
 
         {/* Create Task Button */}
         <View style={[styles.ctaContainer, { borderTopColor: colors.border }]}> 
-          <TouchableOpacity 
-            style={[styles.createButton, { backgroundColor: colors.primary }, isSubmitting && styles.createButtonDisabled]} 
+          <AppButton
+            title="Create Task"
             onPress={handleSave}
             disabled={isSubmitting}
-            activeOpacity={0.7}
-          >
-            {isSubmitting ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <>
-                <MaterialIcons name="add-task" size={20} color="#FFFFFF" />
-                <Text style={styles.createButtonText}>Create Task</Text>
-              </>
-            )}
-          </TouchableOpacity>
+            loading={isSubmitting}
+            leftIcon={<MaterialIcons name="add-task" size={20} color="#FFFFFF" />}
+            style={[styles.createButton, { backgroundColor: colors.primary }, isSubmitting && styles.createButtonDisabled]}
+          />
         </View>
-
-        <View style={{ height: 120 }} />
       </ScrollView>
 
       {/* Bottom Navigation - Matches HomeScreen style */}
@@ -1062,73 +1195,125 @@ const styles = StyleSheet.create({
   // Header - Card-like with soft background, subtle shadow
   headerContainer: {
     paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 16,
+    paddingTop: 14,
+    paddingBottom: 14,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
+    shadowOpacity: 0.04,
     shadowRadius: 3,
     elevation: 2,
     borderBottomWidth: 1,
     overflow: 'hidden',
   },
   headerTitle: { 
-    fontSize: 24, 
+    fontSize: 23,
     fontWeight: '700',
-    marginBottom: 4,
+    marginBottom: 3,
   },
   headerSubtitle: { 
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 13,
+    lineHeight: 18,
   },
 
   // Scroll Content
   scrollContent: {
     paddingHorizontal: 20,
-    paddingTop: 20,
+    paddingTop: 16,
+    paddingBottom: 150,
+  },
+
+  formNotice: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  formNoticeText: {
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
   },
 
   // AI Assist
   aiAssistButton: {
     borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: 14,
     paddingVertical: 12,
     paddingHorizontal: 14,
-    marginBottom: 18,
+    marginBottom: 14,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 2,
   },
   aiAssistIconWrap: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  aiAssistBody: {
+    flex: 1,
   },
   aiAssistText: {
     fontSize: 14,
     fontWeight: '700',
   },
+  aiAssistHint: {
+    fontSize: 12,
+    marginTop: 1,
+  },
   aiAssistModalCard: {
     marginHorizontal: 20,
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: 1,
     padding: 16,
-    marginBottom: 350,
+    marginBottom: 220,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.16,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  aiAssistModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  aiAssistModalIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  aiAssistModalTitleWrap: {
+    flex: 1,
   },
   aiAssistModalTitle: {
     fontSize: 16,
     fontWeight: '700',
-    marginBottom: 10,
+  },
+  aiAssistModalSubtitle: {
+    fontSize: 12,
+    marginTop: 2,
   },
   aiAssistInput: {
     borderWidth: 1,
     borderRadius: 12,
-    minHeight: 100,
+    minHeight: 116,
     textAlignVertical: 'top',
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 12,
     fontSize: 14,
   },
   aiAssistError: {
@@ -1137,7 +1322,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   aiAssistActions: {
-    marginTop: 12,
+    marginTop: 14,
     flexDirection: 'row',
     gap: 10,
   },
@@ -1167,10 +1352,13 @@ const styles = StyleSheet.create({
 
   // Form Fields
   field: { 
-    marginBottom: 24,
+    marginBottom: 18,
+  },
+  appInputContainer: {
+    marginBottom: 0,
   },
   fieldRow: {
-    marginBottom: 24,
+    marginBottom: 18,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -1184,14 +1372,14 @@ const styles = StyleSheet.create({
     marginRight: 16,
   },
   label: { 
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
-    marginBottom: 8,
+    marginBottom: 7,
   },
   helperText: { 
-    fontSize: 13,
+    fontSize: 12,
     marginTop: 6,
-    lineHeight: 18,
+    lineHeight: 16,
   },
 
   // Inputs
@@ -1206,30 +1394,58 @@ const styles = StyleSheet.create({
     minHeight: 100, 
     textAlignVertical: 'top',
   },
+  textAreaInput: {
+    minHeight: 100,
+    textAlignVertical: 'top',
+  },
 
   // Due Date Field
   dateFieldButton: {
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  dateFieldBody: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 10,
+  },
+  dateFieldIconWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  dateFieldTextWrap: {
+    flex: 1,
+  },
   dateFieldText: {
     fontSize: 15,
-    fontWeight: '500',
+    fontWeight: '600',
+  },
+  dateFieldSubtext: {
+    fontSize: 12,
+    marginTop: 2,
   },
   dateQuickActions: {
-    marginTop: 8,
+    marginTop: 10,
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
+    gap: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 8,
   },
   dateQuickActionButton: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
     borderRadius: 8,
     borderWidth: 1,
   },
@@ -1252,15 +1468,15 @@ const styles = StyleSheet.create({
   },
   dateSheet: {
     borderTopWidth: 1,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    paddingBottom: 16,
-    paddingTop: 8,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingBottom: 18,
+    paddingTop: 10,
   },
   sheetHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     paddingVertical: 12,
     borderBottomWidth: 1,
   },
@@ -1279,9 +1495,9 @@ const styles = StyleSheet.create({
   // Dropdown
   dropdownButton: {
     borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: 14,
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: 13,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -1291,7 +1507,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   dropdownMenu: {
-    marginTop: 8,
+    marginTop: 9,
     borderWidth: 1,
     borderRadius: 16,
     overflow: 'hidden',
@@ -1305,7 +1521,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
   },
   dropdownOption: {
-    paddingVertical: 14,
+    paddingVertical: 13,
     paddingHorizontal: 16,
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1320,6 +1536,11 @@ const styles = StyleSheet.create({
   dropdownOptionTextActive: {
     fontWeight: '600',
   },
+  dropdownHelperText: {
+    fontSize: 12,
+    marginTop: 2,
+    lineHeight: 16,
+  },
   dropdownCheckWrap: {
     marginLeft: 6,
     marginRight: 6,
@@ -1332,13 +1553,16 @@ const styles = StyleSheet.create({
   chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
+    gap: 8,
   },
   chip: {
     paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingVertical: 9,
     borderRadius: 999,
     borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
   },
   chipText: {
     fontSize: 13,
@@ -1347,8 +1571,8 @@ const styles = StyleSheet.create({
 
   // Subtasks Section
   subtasksSection: {
-    marginBottom: 24,
-    borderRadius: 12,
+    marginBottom: 18,
+    borderRadius: 14,
     padding: 16,
     borderWidth: 1,
   },
@@ -1362,14 +1586,23 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
+  subtasksSectionHint: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  subtasksCountPill: {
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
   subtasksCount: {
     fontSize: 12,
     fontWeight: '600',
   },
   subtaskCard: {
     borderRadius: 12,
-    padding: 14,
-    marginBottom: 12,
+    padding: 12,
+    marginBottom: 10,
     borderWidth: 1,
   },
   subtaskHeader: {
@@ -1379,7 +1612,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   subtaskLabel: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
   },
   subtaskInput: {
@@ -1396,9 +1629,9 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   removeSubtaskButton: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1422,22 +1655,18 @@ const styles = StyleSheet.create({
   // Create Button
   ctaContainer: {
     borderTopWidth: 1,
-    paddingTop: 12,
-    paddingBottom: 8,
-    marginTop: 8,
+    paddingTop: 14,
+    paddingBottom: 10,
+    marginTop: 4,
   },
   createButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 12,
-    paddingVertical: 16,
-    marginTop: 8,
+    marginTop: 4,
     shadowColor: '#2563EB',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
     elevation: 3,
+    borderRadius: 12,
   },
   createButtonDisabled: {
     shadowOpacity: 0.1,
@@ -1452,19 +1681,20 @@ const styles = StyleSheet.create({
   // Bottom Navigation
   bottomNav: {
     position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
+    bottom: 8,
+    left: 10,
+    right: 10,
     height: 72,
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.06,
+    shadowOpacity: 0.08,
     shadowRadius: 8,
     elevation: 8,
     borderTopWidth: 1,
+    borderRadius: 18,
   },
   navItem: { 
     alignItems: 'center',

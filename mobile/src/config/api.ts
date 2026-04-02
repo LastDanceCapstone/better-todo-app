@@ -272,4 +272,187 @@ export async function updateTask(taskId: string, payload: UpdateTaskPayload): Pr
 	return updatedTask;
 }
 
+export type NotificationType =
+  | 'TASK_DUE_SOON'
+  | 'TASK_OVERDUE'
+  | 'MORNING_OVERVIEW'
+  | 'EVENING_REVIEW';
+
+export type Notification = {
+  id: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  isRead: boolean;
+  createdAt: string;
+  readAt: string | null;
+  userId: string;
+};
+
+export async function getNotifications(): Promise<Notification[]> {
+  const token = await getAuthToken();
+  if (!token) {
+    throw new ApiError('No authentication token found. Please log in again.', 401, 'UNAUTHORIZED');
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/notifications`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  const payload = await response.json();
+
+  if (!response.ok) {
+    const details = extractApiErrorDetails(payload);
+    throw new ApiError(details.message, response.status, details.code, details.issues);
+  }
+
+  return Array.isArray(payload?.notifications) ? payload.notifications : [];
+}
+
+export async function markNotificationAsRead(notificationId: string): Promise<Notification> {
+  const token = await getAuthToken();
+  if (!token) {
+    throw new ApiError('No authentication token found. Please log in again.', 401, 'UNAUTHORIZED');
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/notifications/${notificationId}/read`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  const payload = await response.json();
+
+  if (!response.ok) {
+    const details = extractApiErrorDetails(payload);
+    throw new ApiError(details.message, response.status, details.code, details.issues);
+  }
+
+  return payload?.notification as Notification;
+}
+
+export type UserProfile = {
+  id: string;
+  firstName: string | null;
+  lastName: string | null;
+  email: string;
+  authProvider: 'local' | 'google';
+  createdAt: string;
+};
+
+export async function getUserProfile(): Promise<UserProfile> {
+  const token = await getAuthToken();
+  if (!token) {
+    throw new ApiError('No authentication token found. Please log in again.', 401, 'UNAUTHORIZED');
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/user/profile`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  const payload = await response.json();
+
+  if (!response.ok) {
+    const details = extractApiErrorDetails(payload);
+    throw new ApiError(details.message, response.status, details.code, details.issues);
+  }
+
+  return payload?.user as UserProfile;
+}
+
+export async function updateUserProfile(data: {
+  firstName?: string;
+  lastName?: string;
+}): Promise<UserProfile> {
+  const token = await getAuthToken();
+  if (!token) {
+    throw new ApiError('No authentication token found. Please log in again.', 401, 'UNAUTHORIZED');
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/user/profile`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+
+  const payload = await response.json();
+
+  if (!response.ok) {
+    const details = extractApiErrorDetails(payload);
+    throw new ApiError(details.message, response.status, details.code, details.issues);
+  }
+
+  return payload?.user as UserProfile;
+}
+
+export type TasksCompletedPerDayPoint = {
+	date: string;
+	count: number;
+};
+
+export type ProductivityTrendPoint = {
+	date: string;
+	completed: number;
+	created: number;
+};
+
+export type TaskCategoryPoint = {
+	category: string;
+	count: number;
+	completed: number;
+};
+
+export type ProductivityHeatmapPoint = {
+	day: 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun';
+	hour: number;
+	count: number;
+};
+
+export type ProductivityAnalytics = {
+	completion_rate: number;
+	tasks_completed_this_week: number;
+	most_productive_hour: string;
+	tasks_completed_per_day: TasksCompletedPerDayPoint[];
+	productivity_trends: ProductivityTrendPoint[];
+	task_categories: TaskCategoryPoint[];
+	productivity_heatmap: ProductivityHeatmapPoint[];
+};
+
+export async function getProductivityAnalytics(): Promise<ProductivityAnalytics> {
+	const token = await getAuthToken();
+	if (!token) {
+		throw new ApiError('No authentication token found. Please log in again.', 401, 'UNAUTHORIZED');
+	}
+
+	const response = await fetch(`${API_BASE_URL}/api/analytics/productivity`, {
+		method: 'GET',
+		headers: {
+			Authorization: `Bearer ${token}`,
+			'Content-Type': 'application/json',
+		},
+	});
+
+	const payload = await response.json();
+
+	if (!response.ok) {
+		const details = extractApiErrorDetails(payload);
+		throw new ApiError(details.message, response.status, details.code, details.issues);
+	}
+
+	return payload as ProductivityAnalytics;
+}
+
 export default API_BASE_URL;

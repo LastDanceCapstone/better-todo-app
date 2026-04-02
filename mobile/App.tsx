@@ -18,6 +18,11 @@ import AccountDetailsScreen from './src/screens/AccountDetailsScreen';
 import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
 import CalendarScreen from './src/screens/CalendarScreen';
 import CalendarSettingsScreen from './src/screens/CalendarSettingsScreen';
+import NotificationCenterScreen from './src/screens/NotificationCenterScreen';
+import NotificationSettingsScreen from './src/screens/NotificationSettingsScreen';
+import AccountSettingsScreen from './src/screens/AccountSettingsScreen';
+import GeneralSettingsScreen from './src/screens/GeneralSettingsScreen';
+import AnalyticsScreen from './src/screens/AnalyticsScreen';
 import { getTasks } from './src/config/api';
 
 const APP_CALENDAR_SYNC_ENABLED_KEY = 'prioritizeCalendarAppSyncEnabled';
@@ -29,6 +34,11 @@ type RootStackParamList = {
   TaskDetails: any;
   ResetPassword: { email?: string; token?: string } | undefined;
   CalendarSync: undefined;
+  Notifications: undefined;
+  NotificationSettings: undefined;
+  AccountSettings: undefined;
+  GeneralSettings: undefined;
+  Analytics: undefined;
 };
 
 const RootStack = createNativeStackNavigator<RootStackParamList>();
@@ -270,6 +280,7 @@ const AppNavigator = () => {
         initialRouteName={initialRouteName}
         screenOptions={{
           headerShown: false,
+          animation: 'slide_from_right',
         }}
       >
         <RootStack.Screen name="Login" component={LoginScreen} />
@@ -277,6 +288,11 @@ const AppNavigator = () => {
         <RootStack.Screen name="TaskDetails" component={TaskDetailsScreen} />
         <RootStack.Screen name="ResetPassword" component={ResetPasswordScreen} />
         <RootStack.Screen name="CalendarSync" component={CalendarSettingsScreen} />
+        <RootStack.Screen name="Notifications" component={NotificationCenterScreen} />
+        <RootStack.Screen name="NotificationSettings" component={NotificationSettingsScreen} />
+        <RootStack.Screen name="AccountSettings" component={AccountSettingsScreen} />
+        <RootStack.Screen name="GeneralSettings" component={GeneralSettingsScreen} />
+        <RootStack.Screen name="Analytics" component={AnalyticsScreen} />
       </RootStack.Navigator>
     </NavigationContainer>
   );

@@ -35,3 +35,27 @@ export const markNotificationAsRead = async (notificationId: string, userId: str
     data: { isRead: true, readAt: new Date() },
   });
 };
+
+/**
+ * Returns true if a notification of the given type has already been created
+ * for the user on the current calendar day (UTC). Used for duplicate prevention
+ * in scheduled jobs.
+ */
+export const hasNotificationOfTypeForUserToday = async (
+  userId: string,
+  type: NotificationType,
+): Promise<boolean> => {
+  const start = new Date();
+  start.setUTCHours(0, 0, 0, 0);
+  const end = new Date();
+  end.setUTCHours(23, 59, 59, 999);
+
+  const existing = await prisma.notification.findFirst({
+    where: {
+      userId,
+      type,
+      createdAt: { gte: start, lte: end },
+    },
+  });
+  return existing !== null;
+};

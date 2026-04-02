@@ -2,16 +2,17 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
-  TextInput,
   TouchableOpacity,
   StyleSheet,
-  ScrollView,
   Alert,
-  ActivityIndicator,
+  ScrollView,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../theme';
+import AppInput from '../components/AppInput';
+import AppButton from '../components/AppButton';
+import ScreenWrapper from '../components/ScreenWrapper';
+import GlassCard from '../components/GlassCard';
 
 const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
 
@@ -103,187 +104,164 @@ export default function ResetPasswordScreen({ route, navigation }: any) {
   };
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <MaterialIcons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Reset Password</Text>
-        <View style={styles.headerSpacer} />
-      </View>
+    <ScreenWrapper scroll keyboardAware withHorizontalPadding={false}>
+      <ScrollView
+        style={{ backgroundColor: colors.background }}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.topBar}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={[styles.backButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+          >
+            <MaterialIcons name="arrow-back" size={22} color={colors.text} />
+          </TouchableOpacity>
+        </View>
 
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
-        <Text style={[styles.title, { color: colors.text }]}>Enter Reset Token</Text>
-        <Text style={[styles.subtitle, { color: colors.mutedText }]}>
-          {email ? `Check backend console for the reset token for ${email}` : 'Enter the reset token from your backend console'}
-        </Text>
-
-        <View style={styles.field}>
-          <Text style={[styles.label, { color: colors.text }]}>Reset Token</Text>
-          <TextInput
-            style={[styles.input, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text }]}
-            value={resetToken}
-            onChangeText={setResetToken}
-            placeholder="Paste reset token here"
-            placeholderTextColor={colors.mutedText}
-            autoCapitalize="none"
-            editable={!loading}
-          />
-          <Text style={[styles.helperText, { color: colors.mutedText }]}>
-            Check your backend terminal/console for the token
+        <View style={styles.heroSection}>
+          <Text style={[styles.title, { color: colors.text }]}>Reset your password</Text>
+          <Text style={[styles.subtitle, { color: colors.mutedText }]}> 
+            Enter your reset token and choose a new password to regain access.
           </Text>
         </View>
 
-        <View style={styles.field}>
-          <Text style={[styles.label, { color: colors.text }]}>New Password</Text>
-          <View style={styles.passwordContainer}>
-            <TextInput
-              style={[styles.passwordInput, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text }]}
+        <GlassCard style={styles.infoCard} elevated={false}>
+          <View style={styles.infoRow}>
+            <MaterialIcons name="info-outline" size={16} color={colors.primary} />
+            <Text style={[styles.infoText, { color: colors.mutedText }]}> 
+              {email
+                ? `Use the reset token generated for ${email}`
+                : 'Use the reset token from your backend console.'}
+            </Text>
+          </View>
+        </GlassCard>
+
+        <GlassCard style={styles.formCard}>
+          <View style={styles.field}>
+            <AppInput
+              label="Reset Token"
+              value={resetToken}
+              onChangeText={setResetToken}
+              placeholder="Paste reset token"
+              autoCapitalize="none"
+              editable={!loading}
+              containerStyle={styles.inputContainer}
+            />
+          </View>
+
+          <View style={styles.field}>
+            <AppInput
+              label="New Password"
               value={newPassword}
               onChangeText={setNewPassword}
               placeholder="Enter new password"
-              placeholderTextColor={colors.mutedText}
               secureTextEntry={!showNewPassword}
               editable={!loading}
+              rightIcon={(
+                <TouchableOpacity onPress={() => setShowNewPassword(!showNewPassword)}>
+                  <MaterialIcons
+                    name={showNewPassword ? 'visibility-off' : 'visibility'}
+                    size={20}
+                    color={colors.mutedText}
+                  />
+                </TouchableOpacity>
+              )}
+              containerStyle={styles.inputContainer}
             />
-            <TouchableOpacity
-              style={styles.eyeIcon}
-              onPress={() => setShowNewPassword(!showNewPassword)}
-            >
-              <MaterialIcons
-                name={showNewPassword ? 'visibility-off' : 'visibility'}
-                size={20}
-                color={colors.mutedText}
-              />
-            </TouchableOpacity>
           </View>
-        </View>
 
-        <View style={styles.field}>
-          <Text style={[styles.label, { color: colors.text }]}>Confirm New Password</Text>
-          <View style={styles.passwordContainer}>
-            <TextInput
-              style={[styles.passwordInput, { backgroundColor: colors.surface, borderColor: colors.border, color: colors.text }]}
+          <View style={styles.field}>
+            <AppInput
+              label="Confirm New Password"
               value={confirmPassword}
               onChangeText={setConfirmPassword}
               placeholder="Confirm new password"
-              placeholderTextColor={colors.mutedText}
               secureTextEntry={!showConfirmPassword}
               editable={!loading}
+              rightIcon={(
+                <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)}>
+                  <MaterialIcons
+                    name={showConfirmPassword ? 'visibility-off' : 'visibility'}
+                    size={20}
+                    color={colors.mutedText}
+                  />
+                </TouchableOpacity>
+              )}
+              containerStyle={styles.inputContainer}
             />
-            <TouchableOpacity
-              style={styles.eyeIcon}
-              onPress={() => setShowConfirmPassword(!showConfirmPassword)}
-            >
-              <MaterialIcons
-                name={showConfirmPassword ? 'visibility-off' : 'visibility'}
-                size={20}
-                color={colors.mutedText}
-              />
-            </TouchableOpacity>
           </View>
-        </View>
 
-        <TouchableOpacity
-          style={[styles.button, { backgroundColor: colors.primary }]}
-          onPress={handleResetPassword}
-          disabled={loading}
-        >
-          {loading ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.buttonText}>Reset Password</Text>
-          )}
-        </TouchableOpacity>
+          <AppButton
+            title="Reset Password"
+            onPress={handleResetPassword}
+            disabled={loading}
+            loading={loading}
+            style={styles.button}
+          />
+        </GlassCard>
       </ScrollView>
-    </SafeAreaView>
+    </ScreenWrapper>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
+  topBar: {
+    paddingHorizontal: 20,
+    paddingTop: 8,
   },
   backButton: {
-    padding: 8,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  headerSpacer: {
     width: 40,
-  },
-  scrollView: {
-    flex: 1,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
   },
   scrollContent: {
-    padding: 20,
-    paddingTop: 40,
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    paddingBottom: 24,
+    minHeight: '100%',
   },
-  title: {
-    fontSize: 28,
-    fontWeight: '700',
+  heroSection: {
+    marginTop: 10,
     marginBottom: 12,
   },
-  subtitle: {
-    fontSize: 16,
-    marginBottom: 32,
-    lineHeight: 22,
-  },
-  field: {
-    marginBottom: 24,
-  },
-  label: {
-    fontSize: 16,
-    fontWeight: '600',
+  title: {
+    fontSize: 30,
+    fontWeight: '800',
     marginBottom: 8,
   },
-  input: {
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 16,
+  subtitle: {
+    fontSize: 14,
+    lineHeight: 20,
   },
-  passwordContainer: {
-    position: 'relative',
+  infoCard: {
+    marginBottom: 12,
+    borderRadius: 14,
   },
-  passwordInput: {
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingRight: 50,
-    paddingVertical: 14,
-    fontSize: 16,
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
   },
-  eyeIcon: {
-    position: 'absolute',
-    right: 14,
-    top: 14,
-    padding: 4,
+  infoText: {
+    marginLeft: 8,
+    fontSize: 12,
+    lineHeight: 18,
+    flex: 1,
   },
-  helperText: {
-    fontSize: 13,
-    marginTop: 6,
+  formCard: {
+    borderRadius: 18,
+  },
+  field: {
+    marginBottom: 16,
+  },
+  inputContainer: {
+    marginBottom: 0,
   },
   button: {
-    borderRadius: 12,
-    paddingVertical: 16,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  buttonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
+    marginTop: 2,
   },
 });

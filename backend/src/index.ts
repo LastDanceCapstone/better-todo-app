@@ -7,7 +7,9 @@ import authRoutes from './routes/auth';
 import taskRoutes from './routes/tasks';
 import aiRoutes from './routes/ai';
 import notificationRoutes from './routes/notifications';
+import analyticsRoutes from './routes/analytics';
 import cors from 'cors';
+import { initNotificationScheduler } from './jobs/notificationScheduler';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -44,6 +46,7 @@ app.use('/api', authRoutes);
 app.use('/api', taskRoutes);
 app.use('/api', aiRoutes);
 app.use('/api', notificationRoutes);
+app.use('/api', analyticsRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -96,9 +99,14 @@ app.get('/', (req, res) => {
         create: 'POST /api/notifications',
         markRead: 'PATCH /api/notifications/:id/read',
       },
+      analytics: {
+        productivity: 'GET /api/analytics/productivity',
+      },
     },
   });
 });
+
+initNotificationScheduler();
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on http://0.0.0.0:${PORT}`);
