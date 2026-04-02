@@ -1,13 +1,9 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useRef } from 'react';
+import {
+  Animated, TouchableOpacity, View, Text, StyleSheet,
+} from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../theme/ThemeProvider';
-
-type Subtask = {
-  id: string;
-  title: string;
-  status: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
-};
 
 type Task = {
   id: string;
@@ -16,13 +12,13 @@ type Task = {
   dueAt?: string;
   status: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
   priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
-  subtasks?: Subtask[];
+  subtasks?: any[];
 };
 
 type Props = {
   task: Task;
   onPress?: () => void;
-  onStatusChange?: (id: string, status: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED') => void;
+  onStatusChange?: (id: string, status: any) => void;
   onDelete?: (id: string) => void;
   formatDueDate?: (date?: string) => string;
   formatDisplayDate?: (date?: string) => string;
@@ -32,30 +28,78 @@ const PRIORITY_COLORS: Record<string, string> = {
   URGENT: '#FF4D4D', HIGH: '#FF8C00', MEDIUM: '#F59E0B', LOW: '#22C55E',
 };
 
-export default function SwipeableTaskCard({
+export default function AnimatedTaskCard({
   task, onPress, onStatusChange, onDelete, formatDueDate, formatDisplayDate,
 }: Props) {
   const { colors } = useTheme();
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const tiltAnim = useRef(new Animated.Value(0)).current;
+
   const isCompleted = task.status === 'COMPLETED';
   const priorityColor = PRIORITY_COLORS[task.priority] ?? colors.mutedText;
   const displayDate = formatDisplayDate?.(task.dueAt) ?? formatDueDate?.(task.dueAt) ?? '';
   const subtasks = task.subtasks ?? [];
   const completedSubs = subtasks.filter((s) => s.status === 'COMPLETED').length;
 
+  const handlePressIn = () => {
+    Animated.parallel([
+      Animated.spring(scaleAnim, { toValue: 0.97, useNativeDriver: true, friction: 8 }),
+      Animated.timing(tiltAnim, { toValue: 1, duration: 100, useNativeDriver: true }),
+    ]).start();
+  };
+
+  const handlePressOut = () => {
+    Animated.parallel([
+      Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, friction: 8 }),
+      Animated.timing(tiltAnim, { toValue: 0, duration: 100, useNativeDriver: true }),
+    ]).start();
+  };
+
+  const tilt = tiltAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '1deg'],
+  });
+
   return (
-    <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-      <TouchableOpacity style={styles.inner} onPress={onPress} activeOpacity={0.75}>
+    <Animated.View
+      style={[
+        styles.card,
+        {
+          backgroundColor: colors.surface,
+          borderColor: isCompleted ? `${colors.success}40` : colors.border,
+          transform: [{ scale: scaleAnim }, { rotate: tilt }],
+          shadowColor: colors.primary,
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.08,
+          shadowRadius: 8,
+          elevation: 4,
+        },
+      ]}
+    >
+      <TouchableOpacity
+        onPress={onPress}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        activeOpacity={1}
+      >
+        {/* Completed stripe */}
+        {isCompleted && (
+          <View style={[styles.completedStripe, { backgroundColor: colors.success }]} />
+        )}
+
         {/* Top row */}
         <View style={styles.topRow}>
           <TouchableOpacity
             onPress={() => onStatusChange?.(task.id, isCompleted ? 'TODO' : 'COMPLETED')}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <MaterialIcons
-              name={isCompleted ? 'check-circle' : 'radio-button-unchecked'}
-              size={22}
-              color={isCompleted ? colors.success : colors.mutedText}
-            />
+            <Animated.View>
+              <MaterialIcons
+                name={isCompleted ? 'check-circle' : 'radio-button-unchecked'}
+                size={24}
+                color={isCompleted ? colors.success : colors.mutedText}
+              />
+            </Animated.View>
           </TouchableOpacity>
 
           <Text
@@ -108,72 +152,56 @@ export default function SwipeableTaskCard({
             </View>
           ) : null}
 
-          <View style={[styles.statusPill, { backgroundColor: isCompleted ? `${colors.success}18` : `${colors.primary}18` }]}>
-            <Text style={[styles.statusText, { color: isCompleted ? colors.success : colors.primary }]}>
+          <View style={[styles.statusPill, {
+            backgroundColor: isCompleted ? `${colors.success}18` : `${colors.primary}18`,
+          }]}>
+            <Text style={[styles.statusText, {
+              color: isCompleted ? colors.success : colors.primary,
+            }]}>
               {task.status.replace('_', ' ')}
             </Text>
           </View>
         </View>
       </TouchableOpacity>
-    </View>
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: 1,
     marginHorizontal: 16,
     marginBottom: 10,
     overflow: 'hidden',
   },
-  inner: {
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+  completedStripe: {
+    height: 3,
+    width: '100%',
   },
   topRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+    paddingHorizontal: 14,
+    paddingTop: 12,
     marginBottom: 4,
   },
-  title: {
-    flex: 1,
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  priorityBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
-  },
-  priorityText: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  description: {
-    fontSize: 13,
-    marginBottom: 8,
-    marginLeft: 32,
-  },
+  title: { flex: 1, fontSize: 15, fontWeight: '600' },
+  priorityBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
+  priorityText: { fontSize: 11, fontWeight: '700' },
+  description: { fontSize: 13, marginBottom: 8, marginLeft: 48, paddingHorizontal: 14 },
   bottomRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    marginLeft: 32,
+    marginLeft: 48,
+    paddingHorizontal: 14,
+    paddingBottom: 12,
     flexWrap: 'wrap',
   },
-  metaItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-  },
+  metaItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   metaText: { fontSize: 12 },
-  statusPill: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
-    marginLeft: 'auto',
-  },
+  statusPill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, marginLeft: 'auto' },
   statusText: { fontSize: 11, fontWeight: '700' },
 });

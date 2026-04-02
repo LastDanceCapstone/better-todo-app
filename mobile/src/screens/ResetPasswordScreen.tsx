@@ -11,8 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useTheme } from '../theme';
-
+import { useTheme } from '../theme/ThemeProvider';
 const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
 
 export default function ResetPasswordScreen({ route, navigation }: any) {

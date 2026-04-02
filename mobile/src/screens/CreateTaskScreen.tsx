@@ -20,6 +20,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { useFocusEffect } from '@react-navigation/native';
 import { API_BASE_URL, ApiError, createTask, getAuthToken, parseTask, type ParsedTaskResponse } from '../config/api';
+import { scheduleDueDateReminder } from '../config/notifications';
 
 type Priority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
 type Status = 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
@@ -37,32 +38,24 @@ const STATUS_META: Record<Status, { label: string; icon: keyof typeof MaterialIc
   CANCELLED: { label: 'Cancelled', icon: 'cancel', helper: 'No longer needed' },
 };
 
-// Convert user input into ISO date string for backend
 const normalizeDate = (input: string): string | undefined => {
   if (!input) return undefined;
-
   const value = input.trim();
   if (!value) return undefined;
 
-  // MM-DD-YYYY or M-D-YYYY (with - or /)
   const mdy = value.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
   if (mdy) {
     const [, m, d, y] = mdy;
-    const localDate = new Date(Number(y), Number(m) - 1, Number(d), 23, 59, 0, 0);
-    return localDate.toISOString();
+    return new Date(Number(y), Number(m) - 1, Number(d), 23, 59, 0, 0).toISOString();
   }
 
-  // YYYY-MM-DD format (convert to ISO)
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     const [year, month, day] = value.split('-').map(Number);
     return new Date(year, month - 1, day, 23, 59, 0, 0).toISOString();
   }
 
-  // Let JS try
   const parsed = new Date(value);
-  if (!isNaN(parsed.getTime())) {
-    return parsed.toISOString();
-  }
+  if (!isNaN(parsed.getTime())) return parsed.toISOString();
 
   return undefined;
 };
@@ -75,23 +68,16 @@ const DATE_ONLY_ROUTE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const resolvePrefillDate = (prefillDueAtIso?: string, prefillDateIso?: string): Date | null => {
   if (prefillDueAtIso) {
     const parsed = new Date(prefillDueAtIso);
-    if (!Number.isNaN(parsed.getTime())) {
-      return parsed;
-    }
+    if (!Number.isNaN(parsed.getTime())) return parsed;
   }
-
   if (prefillDateIso) {
     if (DATE_ONLY_ROUTE_PATTERN.test(prefillDateIso)) {
       const [year, month, day] = prefillDateIso.split('-').map(Number);
       return new Date(year, month - 1, day, 23, 59, 0, 0);
     }
-
     const parsed = new Date(prefillDateIso);
-    if (!Number.isNaN(parsed.getTime())) {
-      return parsed;
-    }
+    if (!Number.isNaN(parsed.getTime())) return parsed;
   }
-
   return null;
 };
 
@@ -128,86 +114,62 @@ export default function CreateTaskScreen({ navigation, route }: any) {
     setDueDate('');
     setHasSubtasks(false);
     setSubtaskInputs([{ id: `subtask-${Date.now()}`, title: '', description: '' }]);
-
     setShowDatePicker(false);
     setSelectedDate(new Date());
     setDatePickerMode('date');
     setShowStatusPicker(false);
-
     setShowAiAssistModal(false);
     setAiInput('');
     setAiError(null);
-
     setAiLoading(false);
     setIsSubmitting(false);
     prefillKeyRef.current = null;
-
     modalOpacity.setValue(0);
     modalTranslateY.setValue(40);
   }, [modalOpacity, modalTranslateY]);
 
   useFocusEffect(
     React.useCallback(() => {
-      return () => {
-        resetForm();
-      };
+      return () => { resetForm(); };
     }, [resetForm])
   );
 
   const mapPriority = (parsedPriority: ParsedTaskResponse['priority'], sourceText: string): Priority => {
     if (!parsedPriority) return 'MEDIUM';
-    if (parsedPriority === 'HIGH' && /\burgent\b/i.test(sourceText)) {
-      return 'URGENT';
-    }
+    if (parsedPriority === 'HIGH' && /\burgent\b/i.test(sourceText)) return 'URGENT';
     return parsedPriority;
   };
 
   const applyParsedSubtasks = (parsedSubtasks: string[] | null) => {
-    if (!parsedSubtasks || parsedSubtasks.length === 0) {
-      return;
-    }
-
+    if (!parsedSubtasks || parsedSubtasks.length === 0) return;
     setHasSubtasks(true);
     setSubtaskInputs(
       parsedSubtasks
-        .filter((subtask) => typeof subtask === 'string' && subtask.trim().length > 0)
-        .map((subtask, index) => ({
-          id: `ai-subtask-${Date.now()}-${index}`,
-          title: subtask.trim(),
-          description: '',
-        }))
+        .filter((s) => typeof s === 'string' && s.trim().length > 0)
+        .map((s, i) => ({ id: `ai-subtask-${Date.now()}-${i}`, title: s.trim(), description: '' }))
     );
   };
 
   const handleAiAssistParse = async () => {
-    if (!aiInput.trim()) {
-      setAiError('Please enter a task description first.');
-      return;
-    }
-
+    if (!aiInput.trim()) { setAiError('Please enter a task description first.'); return; }
     setAiLoading(true);
     setAiError(null);
-
     try {
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const parsed = await parseTask(aiInput.trim(), timezone);
-
       setTitle(parsed.title ?? '');
       setDescription(parsed.description ?? '');
       setDueDate(parsed.dueDate ?? '');
       setPriority(mapPriority(parsed.priority, aiInput));
-      applyParsedSubtasks(parsed.subtasks);
-
+      applyParsedSubtasks(parsed.subtasks ?? null);
       setShowAiAssistModal(false);
       setAiInput('');
       setAiError(null);
     } catch (error: any) {
       if (error instanceof ApiError) {
-        if (error.status === 422 && error.issues?.length) {
-          setAiError(`Could not parse task clearly:\n• ${error.issues.join('\n• ')}`);
-        } else {
-          setAiError(error.message);
-        }
+        setAiError(error.status === 422 && error.issues?.length
+          ? `Could not parse task:\n• ${error.issues.join('\n• ')}`
+          : error.message);
       } else {
         setAiError('Failed to parse task. Please try again.');
       }
@@ -219,14 +181,12 @@ export default function CreateTaskScreen({ navigation, route }: any) {
   const onDateChange = (event: any, date?: Date) => {
     if (Platform.OS !== 'ios') return;
     if (event.type !== 'set' || !date) return;
-
     const updatedDate = new Date(selectedDate);
     if (datePickerMode === 'date') {
       updatedDate.setFullYear(date.getFullYear(), date.getMonth(), date.getDate());
     } else {
       updatedDate.setHours(date.getHours(), date.getMinutes(), 0, 0);
     }
-
     setSelectedDate(updatedDate);
   };
 
@@ -246,18 +206,13 @@ export default function CreateTaskScreen({ navigation, route }: any) {
   useEffect(() => {
     const prefillDueAtIso = route?.params?.prefillDueAtIso;
     const prefillDateIso = route?.params?.prefillDateIso;
-
     if (!prefillDueAtIso && !prefillDateIso) return;
-
     const key = `${prefillDueAtIso ?? ''}|${prefillDateIso ?? ''}`;
     if (prefillKeyRef.current === key) return;
-
     const resolved = resolvePrefillDate(prefillDueAtIso, prefillDateIso);
     if (!resolved) return;
-
     commitDueDate(resolved);
     prefillKeyRef.current = key;
-
     if (typeof navigation?.setParams === 'function') {
       navigation.setParams({ prefillDueAtIso: undefined, prefillDateIso: undefined });
     }
@@ -275,7 +230,6 @@ export default function CreateTaskScreen({ navigation, route }: any) {
           commitDueDate(withTime);
           return;
         }
-
         commitDueDate(baseDate);
       },
     });
@@ -285,7 +239,6 @@ export default function CreateTaskScreen({ navigation, route }: any) {
     const parsedDueDate = dueDate ? new Date(dueDate) : new Date();
     const baseDate = Number.isNaN(parsedDueDate.getTime()) ? new Date() : parsedDueDate;
     const defaultedDate = withDefaultTime(baseDate);
-
     setSelectedDate(defaultedDate);
 
     if (Platform.OS === 'android') {
@@ -330,7 +283,6 @@ export default function CreateTaskScreen({ navigation, route }: any) {
       });
       return;
     }
-
     setShowDatePicker(false);
     setDatePickerMode('date');
   };
@@ -341,10 +293,7 @@ export default function CreateTaskScreen({ navigation, route }: any) {
     setDatePickerMode('date');
   };
 
-  const handleToday = () => {
-    const today = withDefaultTime(new Date());
-    commitDueDate(today);
-  };
+  const handleToday = () => commitDueDate(withDefaultTime(new Date()));
 
   const handleTomorrow = () => {
     const tomorrow = withDefaultTime(new Date());
@@ -352,44 +301,28 @@ export default function CreateTaskScreen({ navigation, route }: any) {
     commitDueDate(tomorrow);
   };
 
-  // Add new subtask input with unique ID
   const addSubtaskInput = () => {
     const newId = `subtask-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     setSubtaskInputs([...subtaskInputs, { id: newId, title: '', description: '' }]);
   };
 
-  // Update subtask title
   const updateSubtaskTitle = (id: string, newTitle: string) => {
-    setSubtaskInputs((prevSubtasks) =>
-      prevSubtasks.map((subtask) =>
-        subtask.id === id ? { ...subtask, title: newTitle } : subtask
-      )
-    );
+    setSubtaskInputs(prev => prev.map(s => s.id === id ? { ...s, title: newTitle } : s));
   };
 
-  // Update subtask description
   const updateSubtaskDescription = (id: string, newDescription: string) => {
-    setSubtaskInputs((prevSubtasks) =>
-      prevSubtasks.map((subtask) =>
-        subtask.id === id ? { ...subtask, description: newDescription } : subtask
-      )
-    );
+    setSubtaskInputs(prev => prev.map(s => s.id === id ? { ...s, description: newDescription } : s));
   };
 
-  // Remove subtask input
   const removeSubtaskInput = (id: string) => {
     if (subtaskInputs.length > 1) {
-      setSubtaskInputs((prevSubtasks) => 
-        prevSubtasks.filter((subtask) => subtask.id !== id)
-      );
+      setSubtaskInputs(prev => prev.filter(s => s.id !== id));
     }
   };
 
-  // Toggle subtasks feature
   const toggleSubtasks = (value: boolean) => {
     setHasSubtasks(value);
     if (!value) {
-      // Reset subtasks when disabled
       setSubtaskInputs([{ id: `subtask-${Date.now()}`, title: '', description: '' }]);
     }
   };
@@ -400,14 +333,10 @@ export default function CreateTaskScreen({ navigation, route }: any) {
       return;
     }
 
-    // Validate subtasks if enabled
     if (hasSubtasks) {
-      const filledSubtasks = subtaskInputs.filter((st) => st.title.trim());
+      const filledSubtasks = subtaskInputs.filter(st => st.title.trim());
       if (filledSubtasks.length === 0) {
-        Alert.alert(
-          'Empty Subtasks',
-          'Please add at least one subtask or disable subtasks.'
-        );
+        Alert.alert('Empty Subtasks', 'Please add at least one subtask or disable subtasks.');
         return;
       }
     }
@@ -416,7 +345,6 @@ export default function CreateTaskScreen({ navigation, route }: any) {
 
     try {
       const token = await getAuthToken();
-      
       if (!token) {
         Alert.alert('Error', 'No authentication token found. Please log in again.');
         navigation.replace('Login');
@@ -425,7 +353,6 @@ export default function CreateTaskScreen({ navigation, route }: any) {
 
       const normalizedDueDate = dueDate ? normalizeDate(dueDate) : undefined;
 
-      // Prepare task data for backend
       const taskData = {
         title: title.trim(),
         description: description.trim() || undefined,
@@ -434,68 +361,43 @@ export default function CreateTaskScreen({ navigation, route }: any) {
         dueAt: normalizedDueDate,
       };
 
-      console.log('Creating task with data:', taskData);
       const data = await createTask(taskData);
-      console.log('Task creation response:', data);
-
       const createdTask = data.task;
+
+      // 🔔 Schedule due date reminder if task has a due date
+      if (normalizedDueDate && createdTask) {
+        await scheduleDueDateReminder(createdTask.id, title.trim(), normalizedDueDate);
+      }
 
       // Create subtasks if enabled
       if (hasSubtasks) {
-        const filledSubtasks = subtaskInputs.filter((st) => st.title.trim());
-        
-        console.log('Creating subtasks:', filledSubtasks);
-        
+        const filledSubtasks = subtaskInputs.filter(st => st.title.trim());
         for (const subtask of filledSubtasks) {
           try {
-            const subtaskData = {
-              title: subtask.title.trim(),
-              description: subtask.description?.trim() || undefined,
-              status: 'TODO',
-            };
-
-            console.log('Sending subtask data:', subtaskData);
-
-            const subtaskResponse = await fetch(
-              `${API_BASE_URL}/api/tasks/${createdTask.id}/subtasks`,
-              {
-                method: 'POST',
-                headers: {
-                  'Authorization': `Bearer ${token}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(subtaskData),
-              }
-            );
-
-            if (!subtaskResponse.ok) {
-              const errorData = await subtaskResponse.json();
-              console.error('Failed to create subtask:', subtask.title, errorData);
-            } else {
-              const subtaskResponseData = await subtaskResponse.json();
-              console.log('Created subtask:', subtaskResponseData);
-            }
+            await fetch(`${API_BASE_URL}/api/tasks/${createdTask.id}/subtasks`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                title: subtask.title.trim(),
+                description: subtask.description?.trim() || undefined,
+                status: 'TODO',
+              }),
+            });
           } catch (error) {
             console.error('Error creating subtask:', error);
           }
         }
       }
 
-      // Clear form
       resetForm();
-      
-      // Show success message
+
       Alert.alert(
-        'Success',
-        hasSubtasks
-          ? 'Task created with subtasks!'
-          : 'Task created successfully!',
-        [
-          {
-            text: 'OK',
-            onPress: () => navigation.navigate('Home', { refresh: true }),
-          },
-        ]
+        'Success! 🎉',
+        hasSubtasks ? 'Task created with subtasks!' : 'Task created successfully!',
+        [{ text: 'OK', onPress: () => navigation.navigate('Home', { refresh: true }) }]
       );
     } catch (error) {
       if (error instanceof ApiError) {
@@ -507,8 +409,6 @@ export default function CreateTaskScreen({ navigation, route }: any) {
         }
         return;
       }
-
-      console.error('Error creating task:', error);
       Alert.alert('Error', 'Failed to create task. Please check your connection.');
     } finally {
       setIsSubmitting(false);
@@ -517,7 +417,7 @@ export default function CreateTaskScreen({ navigation, route }: any) {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Header - Card-like with soft background, subtle shadow */}
+      {/* Header */}
       <View style={[styles.headerContainer, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <Text style={[styles.headerTitle, { color: colors.text }]}>Create Task</Text>
         <Text style={[styles.headerSubtitle, { color: colors.mutedText }]}>
@@ -530,12 +430,10 @@ export default function CreateTaskScreen({ navigation, route }: any) {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
+        {/* AI Assist Button */}
         <TouchableOpacity
           style={[styles.aiAssistButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
-          onPress={() => {
-            setShowAiAssistModal(true);
-            setAiError(null);
-          }}
+          onPress={() => { setShowAiAssistModal(true); setAiError(null); }}
           activeOpacity={0.75}
         >
           <View style={[styles.aiAssistIconWrap, { backgroundColor: colors.primary + '1A' }]}>
@@ -544,7 +442,7 @@ export default function CreateTaskScreen({ navigation, route }: any) {
           <Text style={[styles.aiAssistText, { color: colors.text }]}>AI Assist</Text>
         </TouchableOpacity>
 
-        {/* Title Field */}
+        {/* Title */}
         <View style={styles.field}>
           <Text style={[styles.label, { color: colors.text }]}>Task Title</Text>
           <TextInput
@@ -557,7 +455,7 @@ export default function CreateTaskScreen({ navigation, route }: any) {
           />
         </View>
 
-        {/* Description Field */}
+        {/* Description */}
         <View style={styles.field}>
           <Text style={[styles.label, { color: colors.text }]}>Description</Text>
           <Text style={[styles.helperText, { color: colors.mutedText }]}>Optional</Text>
@@ -572,7 +470,7 @@ export default function CreateTaskScreen({ navigation, route }: any) {
           />
         </View>
 
-        {/* Due Date Field */}
+        {/* Due Date */}
         <View style={styles.field}>
           <Text style={[styles.label, { color: colors.text }]}>Due Date</Text>
           <TouchableOpacity
@@ -580,45 +478,35 @@ export default function CreateTaskScreen({ navigation, route }: any) {
             onPress={openDatePicker}
             disabled={isSubmitting}
             activeOpacity={0.7}
-            accessibilityRole="button"
-            accessibilityLabel={dueDate ? `Due date: ${formatDateForDisplayLong(new Date(dueDate))}` : 'Select due date'}
           >
-            <Text
-              style={[
-                styles.dateFieldText,
-                { color: dueDate ? colors.text : colors.mutedText },
-              ]}
-            >
+            <Text style={[styles.dateFieldText, { color: dueDate ? colors.text : colors.mutedText }]}>
               {dueDate
                 ? `${formatDateForDisplayLong(new Date(dueDate))} • ${new Date(dueDate).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
                 : 'Select a date'}
             </Text>
             <MaterialIcons name="calendar-today" size={20} color={colors.mutedText} />
           </TouchableOpacity>
-          <Text style={[styles.helperText, { color: colors.mutedText }]}>Optional - tap to select</Text>
+          <Text style={[styles.helperText, { color: colors.mutedText }]}>Optional — tap to select</Text>
           <View style={styles.dateQuickActions}>
-            <TouchableOpacity
-              onPress={handleToday}
-              style={[styles.dateQuickActionButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
-            >
-              <Text style={[styles.dateQuickActionText, { color: colors.text }]}>Today</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={handleTomorrow}
-              style={[styles.dateQuickActionButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
-            >
-              <Text style={[styles.dateQuickActionText, { color: colors.text }]}>Tomorrow</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={handleClearDate}
-              style={[styles.dateQuickActionButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
-            >
-              <Text style={[styles.dateQuickActionText, { color: colors.danger }]}>Clear</Text>
-            </TouchableOpacity>
+            {[
+              { label: 'Today', onPress: handleToday },
+              { label: 'Tomorrow', onPress: handleTomorrow },
+              { label: 'Clear', onPress: handleClearDate, danger: true },
+            ].map((btn) => (
+              <TouchableOpacity
+                key={btn.label}
+                onPress={btn.onPress}
+                style={[styles.dateQuickActionButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+              >
+                <Text style={[styles.dateQuickActionText, { color: btn.danger ? colors.danger : colors.text }]}>
+                  {btn.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
           </View>
         </View>
 
-        {/* Date Picker */}
+        {/* iOS Date Picker Modal */}
         {Platform.OS === 'ios' && showDatePicker && (
           <Modal transparent animationType="none" visible onRequestClose={closeDatePicker}>
             <View style={styles.modalRoot}>
@@ -632,7 +520,7 @@ export default function CreateTaskScreen({ navigation, route }: any) {
                   { opacity: modalOpacity, transform: [{ translateY: modalTranslateY }] },
                 ]}
               >
-                <View style={[styles.sheetHeader, { borderBottomColor: colors.border }]}> 
+                <View style={[styles.sheetHeader, { borderBottomColor: colors.border }]}>
                   <TouchableOpacity onPress={handleClearDate}>
                     <Text style={[styles.sheetActionText, { color: colors.danger }]}>Clear</Text>
                   </TouchableOpacity>
@@ -644,12 +532,7 @@ export default function CreateTaskScreen({ navigation, route }: any) {
                       <Text style={[styles.sheetActionText, { color: colors.primary }]}>Next</Text>
                     </TouchableOpacity>
                   ) : (
-                    <TouchableOpacity
-                      onPress={() => {
-                        commitDueDate(selectedDate);
-                        closeDatePicker();
-                      }}
-                    >
+                    <TouchableOpacity onPress={() => { commitDueDate(selectedDate); closeDatePicker(); }}>
                       <Text style={[styles.sheetActionText, { color: colors.primary }]}>Done</Text>
                     </TouchableOpacity>
                   )}
@@ -670,53 +553,28 @@ export default function CreateTaskScreen({ navigation, route }: any) {
           </Modal>
         )}
 
-        <Modal
-          transparent
-          animationType="fade"
-          visible={showAiAssistModal}
-          onRequestClose={() => setShowAiAssistModal(false)}
-        >
+        {/* AI Assist Modal */}
+        <Modal transparent animationType="fade" visible={showAiAssistModal} onRequestClose={() => setShowAiAssistModal(false)}>
           <View style={styles.modalRoot}>
-            <Pressable
-              onPress={() => setShowAiAssistModal(false)}
-              style={styles.modalBackdropPressable}
-            >
+            <Pressable onPress={() => setShowAiAssistModal(false)} style={styles.modalBackdropPressable}>
               <View style={styles.modalBackdrop} />
             </Pressable>
-
-            <View
-              style={[
-                styles.aiAssistModalCard,
-                { backgroundColor: colors.surface, borderColor: colors.border },
-              ]}
-            >
-              <Text style={[styles.aiAssistModalTitle, { color: colors.text }]}>AI Assist</Text>
+            <View style={[styles.aiAssistModalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Text style={[styles.aiAssistModalTitle, { color: colors.text }]}>AI Assist ✨</Text>
               <TextInput
-                style={[
-                  styles.aiAssistInput,
-                  {
-                    backgroundColor: colors.background,
-                    borderColor: colors.border,
-                    color: colors.text,
-                  },
-                ]}
-                placeholder="Describe your task naturally..."
+                style={[styles.aiAssistInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.text }]}
+                placeholder="Describe your task naturally... e.g. 'Finish biology report by Friday urgent'"
                 placeholderTextColor={colors.mutedText}
                 multiline
                 value={aiInput}
                 onChangeText={setAiInput}
                 editable={!aiLoading}
               />
-
               {aiError ? <Text style={[styles.aiAssistError, { color: colors.danger }]}>{aiError}</Text> : null}
-
               <View style={styles.aiAssistActions}>
                 <TouchableOpacity
                   style={[styles.aiAssistSecondaryButton, { borderColor: colors.border }]}
-                  onPress={() => {
-                    setShowAiAssistModal(false);
-                    setAiError(null);
-                  }}
+                  onPress={() => { setShowAiAssistModal(false); setAiError(null); }}
                   disabled={aiLoading}
                 >
                   <Text style={[styles.aiAssistSecondaryText, { color: colors.text }]}>Cancel</Text>
@@ -726,18 +584,17 @@ export default function CreateTaskScreen({ navigation, route }: any) {
                   onPress={handleAiAssistParse}
                   disabled={aiLoading}
                 >
-                  {aiLoading ? (
-                    <ActivityIndicator size="small" color={colors.surface} />
-                  ) : (
-                    <Text style={[styles.aiAssistPrimaryText, { color: colors.surface }]}>Parse</Text>
-                  )}
+                  {aiLoading
+                    ? <ActivityIndicator size="small" color={colors.surface} />
+                    : <Text style={[styles.aiAssistPrimaryText, { color: colors.surface }]}>Parse</Text>
+                  }
                 </TouchableOpacity>
               </View>
             </View>
           </View>
         </Modal>
 
-        {/* Priority Field */}
+        {/* Priority */}
         <View style={styles.field}>
           <Text style={[styles.label, { color: colors.text }]}>Priority</Text>
           <View style={styles.chipRow}>
@@ -756,12 +613,7 @@ export default function CreateTaskScreen({ navigation, route }: any) {
                   disabled={isSubmitting}
                   activeOpacity={0.8}
                 >
-                  <Text
-                    style={[
-                      styles.chipText,
-                      { color: isSelected ? colors.surface : colors.text },
-                    ]}
-                  >
+                  <Text style={[styles.chipText, { color: isSelected ? colors.surface : colors.text }]}>
                     {level.charAt(0) + level.slice(1).toLowerCase()}
                   </Text>
                 </TouchableOpacity>
@@ -770,48 +622,34 @@ export default function CreateTaskScreen({ navigation, route }: any) {
           </View>
         </View>
 
-        {/* Status Field */}
+        {/* Status */}
         <View style={styles.field}>
           <Text style={[styles.label, { color: colors.text }]}>Status</Text>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[styles.dropdownButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
             onPress={() => setShowStatusPicker(!showStatusPicker)}
             disabled={isSubmitting}
             activeOpacity={0.7}
-            accessibilityRole="button"
-            accessibilityLabel={`Status: ${STATUS_META[status].label}`}
           >
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <MaterialIcons name={STATUS_META[status].icon} size={20} color={colors.mutedText} />
-              <Text style={[styles.dropdownText, { color: colors.text }]}>
-                {STATUS_META[status].label}
-              </Text>
+              <Text style={[styles.dropdownText, { color: colors.text }]}>{STATUS_META[status].label}</Text>
             </View>
-            <MaterialIcons 
-              name={showStatusPicker ? "arrow-drop-up" : "arrow-drop-down"} 
-              size={24} 
-              color={colors.mutedText}
-            />
+            <MaterialIcons name={showStatusPicker ? 'arrow-drop-up' : 'arrow-drop-down'} size={24} color={colors.mutedText} />
           </TouchableOpacity>
-          
-          {/* Status Dropdown Options */}
+
           {showStatusPicker && (
-            <View style={[styles.dropdownMenu, styles.statusMenu, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
+            <View style={[styles.dropdownMenu, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               {(Object.keys(STATUS_META) as Status[]).map((statusOption) => (
                 <TouchableOpacity
                   key={statusOption}
                   style={[
                     styles.dropdownOption,
-                    status === statusOption && [styles.dropdownOptionActive, { backgroundColor: colors.primary + '15' }],
+                    status === statusOption && { backgroundColor: colors.primary + '15' },
                     { borderBottomColor: colors.border, borderBottomWidth: StyleSheet.hairlineWidth },
                   ]}
-                  onPress={() => {
-                    setStatus(statusOption);
-                    setShowStatusPicker(false);
-                  }}
+                  onPress={() => { setStatus(statusOption); setShowStatusPicker(false); }}
                   activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel={STATUS_META[statusOption].label}
                 >
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                     <MaterialIcons
@@ -820,30 +658,19 @@ export default function CreateTaskScreen({ navigation, route }: any) {
                       color={status === statusOption ? colors.primary : colors.mutedText}
                     />
                     <View style={{ flex: 1 }}>
-                      <Text
-                        style={[
-                          styles.dropdownOptionText,
-                          status === statusOption && [styles.dropdownOptionTextActive, { color: colors.primary }],
-                          { color: status === statusOption ? colors.primary : colors.text },
-                        ]}
-                      >
+                      <Text style={[styles.dropdownOptionText, { color: status === statusOption ? colors.primary : colors.text }]}>
                         {STATUS_META[statusOption].label}
                       </Text>
                       {STATUS_META[statusOption].helper ? (
-                        <Text style={[styles.helperText, { color: colors.mutedText, marginTop: 2 }]}> 
+                        <Text style={[styles.helperText, { color: colors.mutedText, marginTop: 2 }]}>
                           {STATUS_META[statusOption].helper}
                         </Text>
                       ) : null}
                     </View>
                   </View>
-                  <View
-                    style={[
-                      styles.dropdownCheckWrap,
-                      { opacity: status === statusOption ? 1 : 0 },
-                    ]}
-                  >
+                  {status === statusOption && (
                     <MaterialIcons name="check" size={20} color={colors.primary} />
-                  </View>
+                  )}
                 </TouchableOpacity>
               ))}
             </View>
@@ -858,8 +685,8 @@ export default function CreateTaskScreen({ navigation, route }: any) {
               Break down this task into smaller steps.
             </Text>
           </View>
-          <Switch 
-            value={hasSubtasks} 
+          <Switch
+            value={hasSubtasks}
             onValueChange={toggleSubtasks}
             disabled={isSubmitting}
             trackColor={{ false: colors.border, true: colors.primary + '50' }}
@@ -885,10 +712,9 @@ export default function CreateTaskScreen({ navigation, route }: any) {
               <MaterialIcons name="add-circle-outline" size={20} color={colors.primary} />
               <Text style={[styles.addSubtaskText, { color: colors.primary }]}>Add Another Subtask</Text>
             </TouchableOpacity>
-            
+
             {subtaskInputs.map((subtask, index) => (
-              <View key={subtask.id} style={[styles.subtaskCard, { backgroundColor: colors.card, borderColor: colors.border }]}> 
-                {/* Subtask Header */}
+              <View key={subtask.id} style={[styles.subtaskCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <View style={styles.subtaskHeader}>
                   <Text style={[styles.subtaskLabel, { color: colors.mutedText }]}>Subtask {index + 1}</Text>
                   {subtaskInputs.length > 1 && (
@@ -896,14 +722,11 @@ export default function CreateTaskScreen({ navigation, route }: any) {
                       style={[styles.removeSubtaskButton, { backgroundColor: colors.danger + '15' }]}
                       onPress={() => removeSubtaskInput(subtask.id)}
                       disabled={isSubmitting}
-                      activeOpacity={0.7}
                     >
                       <MaterialIcons name="close" size={20} color={colors.danger} />
                     </TouchableOpacity>
                   )}
                 </View>
-
-                {/* Subtask Title Input */}
                 <TextInput
                   style={[styles.subtaskInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.text }]}
                   placeholder="Subtask title"
@@ -912,8 +735,6 @@ export default function CreateTaskScreen({ navigation, route }: any) {
                   onChangeText={(text) => updateSubtaskTitle(subtask.id, text)}
                   editable={!isSubmitting}
                 />
-
-                {/* Subtask Description Input (Optional) */}
                 <TextInput
                   style={[styles.subtaskInput, styles.subtaskDescriptionInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.text }]}
                   placeholder="Description (optional)"
@@ -926,16 +747,13 @@ export default function CreateTaskScreen({ navigation, route }: any) {
                 />
               </View>
             ))}
-
-            {/* Add Another Subtask Button */}
-            
           </View>
         )}
 
-        {/* Create Task Button */}
-        <View style={[styles.ctaContainer, { borderTopColor: colors.border }]}> 
-          <TouchableOpacity 
-            style={[styles.createButton, { backgroundColor: colors.primary }, isSubmitting && styles.createButtonDisabled]} 
+        {/* Create Button */}
+        <View style={[styles.ctaContainer, { borderTopColor: colors.border }]}>
+          <TouchableOpacity
+            style={[styles.createButton, { backgroundColor: colors.primary }, isSubmitting && styles.createButtonDisabled]}
             onPress={handleSave}
             disabled={isSubmitting}
             activeOpacity={0.7}
@@ -954,528 +772,98 @@ export default function CreateTaskScreen({ navigation, route }: any) {
         <View style={{ height: 120 }} />
       </ScrollView>
 
-      {/* Bottom Navigation - Matches HomeScreen style */}
+      {/* Bottom Nav */}
       <View style={[styles.bottomNav, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => {
-            setActiveNav('Home');
-            navigation.navigate('Home');
-          }}
-          activeOpacity={0.7}
-        >
-          <MaterialIcons
-            name="home"
-            size={26}
-            color={activeNav === 'Home' ? colors.primary : colors.mutedText}
-          />
-          <Text
-            style={[
-              styles.navText,
-              activeNav === 'Home' && [styles.navTextActive, { color: colors.primary }],
-              { color: activeNav === 'Home' ? colors.primary : colors.mutedText },
-            ]}
+        {[
+          { name: 'Home', icon: 'home', screen: 'Home' },
+          { name: 'Create', icon: 'add-circle', screen: 'Create' },
+          { name: 'Calendar', icon: 'calendar-today', screen: 'Calendar' },
+          { name: 'Account', icon: 'account-circle', screen: 'Account' },
+        ].map((item) => (
+          <TouchableOpacity
+            key={item.name}
+            style={styles.navItem}
+            onPress={() => { setActiveNav(item.name); navigation.navigate(item.screen); }}
+            activeOpacity={0.7}
           >
-            Home
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => setActiveNav('Create')}
-          activeOpacity={0.7}
-        >
-          <MaterialIcons
-            name="add-circle"
-            size={26}
-            color={activeNav === 'Create' ? colors.primary : colors.mutedText}
-          />
-          <Text
-            style={[
-              styles.navText,
-              activeNav === 'Create' && [styles.navTextActive, { color: colors.primary }],
-              { color: activeNav === 'Create' ? colors.primary : colors.mutedText },
-            ]}
-          >
-            Create
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => {
-            setActiveNav('Calendar');
-            navigation.navigate('Calendar');
-          }}
-          activeOpacity={0.7}
-        >
-          <MaterialIcons
-            name="calendar-today"
-            size={26}
-            color={activeNav === 'Calendar' ? colors.primary : colors.mutedText}
-          />
-          <Text
-            style={[
-              styles.navText,
-              activeNav === 'Calendar' && [styles.navTextActive, { color: colors.primary }],
-              { color: activeNav === 'Calendar' ? colors.primary : colors.mutedText },
-            ]}
-          >
-            Calendar
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => {
-            setActiveNav('Account');
-            navigation.navigate('Account');
-          }}
-          activeOpacity={0.7}
-        >
-          <MaterialIcons
-            name="account-circle"
-            size={26}
-            color={activeNav === 'Account' ? colors.primary : colors.mutedText}
-          />
-          <Text
-            style={[
-              styles.navText,
-              activeNav === 'Account' && [styles.navTextActive, { color: colors.primary }],
-              { color: activeNav === 'Account' ? colors.primary : colors.mutedText },
-            ]}
-          >
-            Account
-          </Text>
-        </TouchableOpacity>
+            <MaterialIcons
+              name={item.icon as any}
+              size={26}
+              color={activeNav === item.name ? colors.primary : colors.mutedText}
+            />
+            <Text style={[styles.navText, { color: activeNav === item.name ? colors.primary : colors.mutedText }]}>
+              {item.name}
+            </Text>
+          </TouchableOpacity>
+        ))}
       </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  // Container
-  container: { 
-    flex: 1,
-  },
-
-  // Header - Card-like with soft background, subtle shadow
-  headerContainer: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 2,
-    borderBottomWidth: 1,
-    overflow: 'hidden',
-  },
-  headerTitle: { 
-    fontSize: 24, 
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  headerSubtitle: { 
-    fontSize: 14,
-    lineHeight: 20,
-  },
-
-  // Scroll Content
-  scrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 20,
-  },
-
-  // AI Assist
-  aiAssistButton: {
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    marginBottom: 18,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  aiAssistIconWrap: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  aiAssistText: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  aiAssistModalCard: {
-    marginHorizontal: 20,
-    borderRadius: 14,
-    borderWidth: 1,
-    padding: 16,
-    marginBottom: 350,
-  },
-  aiAssistModalTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    marginBottom: 10,
-  },
-  aiAssistInput: {
-    borderWidth: 1,
-    borderRadius: 12,
-    minHeight: 100,
-    textAlignVertical: 'top',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
-  },
-  aiAssistError: {
-    marginTop: 8,
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  aiAssistActions: {
-    marginTop: 12,
-    flexDirection: 'row',
-    gap: 10,
-  },
-  aiAssistSecondaryButton: {
-    flex: 1,
-    borderWidth: 1,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-  },
-  aiAssistSecondaryText: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  aiAssistPrimaryButton: {
-    flex: 1,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-  },
-  aiAssistPrimaryText: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-
-  // Form Fields
-  field: { 
-    marginBottom: 24,
-  },
-  fieldRow: {
-    marginBottom: 24,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  fieldRowLeft: {
-    flex: 1,
-    marginRight: 16,
-  },
-  label: { 
-    fontSize: 16,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  helperText: { 
-    fontSize: 13,
-    marginTop: 6,
-    lineHeight: 18,
-  },
-
-  // Inputs
-  input: {
-    borderRadius: 12,
-    borderWidth: 1,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 15,
-  },
-  textArea: { 
-    minHeight: 100, 
-    textAlignVertical: 'top',
-  },
-
-  // Due Date Field
-  dateFieldButton: {
-    borderRadius: 12,
-    borderWidth: 1,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  dateFieldText: {
-    fontSize: 15,
-    fontWeight: '500',
-  },
-  dateQuickActions: {
-    marginTop: 8,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  dateQuickActionButton: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-  },
-  dateQuickActionText: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-
-  // iOS Date Picker Modal
-  modalRoot: {
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  modalBackdropPressable: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.35)',
-  },
-  dateSheet: {
-    borderTopWidth: 1,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    paddingBottom: 16,
-    paddingTop: 8,
-  },
-  sheetHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-  },
-  sheetActionText: {
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  datePickerContainer: {
-    alignItems: 'center',
-    paddingTop: 8,
-  },
-  datePicker: {
-    width: '100%',
-  },
-
-  // Dropdown
-  dropdownButton: {
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  dropdownText: {
-    fontSize: 15,
-    fontWeight: '500',
-  },
-  dropdownMenu: {
-    marginTop: 8,
-    borderWidth: 1,
-    borderRadius: 16,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  statusMenu: {
-    borderRadius: 16,
-  },
-  dropdownOption: {
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingRight: 36,
-  },
-  dropdownOptionActive: {
-  },
-  dropdownOptionText: {
-    fontSize: 15,
-  },
-  dropdownOptionTextActive: {
-    fontWeight: '600',
-  },
-  dropdownCheckWrap: {
-    marginLeft: 6,
-    marginRight: 6,
-    width: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  // Priority chips
-  chipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  chip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-  },
-  chipText: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-
-  // Subtasks Section
-  subtasksSection: {
-    marginBottom: 24,
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-  },
-  subtasksHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  subtasksSectionTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  subtasksCount: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  subtaskCard: {
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 12,
-    borderWidth: 1,
-  },
-  subtaskHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  subtaskLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  subtaskInput: {
-    borderRadius: 10,
-    borderWidth: 1,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 15,
-    marginBottom: 10,
-  },
-  subtaskDescriptionInput: {
-    minHeight: 70,
-    textAlignVertical: 'top',
-    marginBottom: 0,
-  },
-  removeSubtaskButton: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  addSubtaskButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderStyle: 'dashed',
-    marginBottom: 12,
-  },
-  addSubtaskText: {
-    fontSize: 15,
-    fontWeight: '600',
-    marginLeft: 8,
-  },
-
-  // Create Button
-  ctaContainer: {
-    borderTopWidth: 1,
-    paddingTop: 12,
-    paddingBottom: 8,
-    marginTop: 8,
-  },
-  createButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 12,
-    paddingVertical: 16,
-    marginTop: 8,
-    shadowColor: '#2563EB',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  createButtonDisabled: {
-    shadowOpacity: 0.1,
-  },
-  createButtonText: { 
-    color: '#FFFFFF', 
-    fontSize: 16, 
-    fontWeight: '700',
-    marginLeft: 8,
-  },
-
-  // Bottom Navigation
-  bottomNav: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 72,
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 8,
-    borderTopWidth: 1,
-  },
-  navItem: { 
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-  },
-  navText: { 
-    fontSize: 11, 
-    fontWeight: '600',
-    marginTop: 4,
-  },
-  navTextActive: { 
-  },
+  container: { flex: 1 },
+  headerContainer: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 16, borderBottomWidth: 1 },
+  headerTitle: { fontSize: 24, fontWeight: '700', marginBottom: 4 },
+  headerSubtitle: { fontSize: 14, lineHeight: 20 },
+  scrollContent: { paddingHorizontal: 20, paddingTop: 20 },
+  aiAssistButton: { borderWidth: 1, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 18, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  aiAssistIconWrap: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  aiAssistText: { fontSize: 14, fontWeight: '700' },
+  aiAssistModalCard: { marginHorizontal: 20, borderRadius: 14, borderWidth: 1, padding: 16, marginBottom: 350 },
+  aiAssistModalTitle: { fontSize: 16, fontWeight: '700', marginBottom: 10 },
+  aiAssistInput: { borderWidth: 1, borderRadius: 12, minHeight: 100, textAlignVertical: 'top', paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
+  aiAssistError: { marginTop: 8, fontSize: 12, lineHeight: 18 },
+  aiAssistActions: { marginTop: 12, flexDirection: 'row', gap: 10 },
+  aiAssistSecondaryButton: { flex: 1, borderWidth: 1, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingVertical: 10 },
+  aiAssistSecondaryText: { fontSize: 14, fontWeight: '600' },
+  aiAssistPrimaryButton: { flex: 1, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingVertical: 10 },
+  aiAssistPrimaryText: { fontSize: 14, fontWeight: '700' },
+  field: { marginBottom: 24 },
+  fieldRow: { marginBottom: 24, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12, borderWidth: 1 },
+  fieldRowLeft: { flex: 1, marginRight: 16 },
+  label: { fontSize: 16, fontWeight: '700', marginBottom: 8 },
+  helperText: { fontSize: 13, marginTop: 6, lineHeight: 18 },
+  input: { borderRadius: 12, borderWidth: 1, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15 },
+  textArea: { minHeight: 100, textAlignVertical: 'top' },
+  dateFieldButton: { borderRadius: 12, borderWidth: 1, paddingHorizontal: 16, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  dateFieldText: { fontSize: 15, fontWeight: '500' },
+  dateQuickActions: { marginTop: 8, flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  dateQuickActionButton: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1 },
+  dateQuickActionText: { fontSize: 13, fontWeight: '600' },
+  modalRoot: { flex: 1, justifyContent: 'flex-end' },
+  modalBackdropPressable: { ...StyleSheet.absoluteFillObject },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
+  dateSheet: { borderTopWidth: 1, borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingBottom: 16, paddingTop: 8 },
+  sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1 },
+  sheetActionText: { fontSize: 15, fontWeight: '600' },
+  datePickerContainer: { alignItems: 'center', paddingTop: 8 },
+  datePicker: { width: '100%' },
+  dropdownButton: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  dropdownText: { fontSize: 15, fontWeight: '500' },
+  dropdownMenu: { marginTop: 8, borderWidth: 1, borderRadius: 16, overflow: 'hidden', elevation: 3 },
+  dropdownOption: { paddingVertical: 14, paddingHorizontal: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  dropdownOptionText: { fontSize: 15 },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, borderWidth: 1 },
+  chipText: { fontSize: 13, fontWeight: '600' },
+  subtasksSection: { marginBottom: 24, borderRadius: 12, padding: 16, borderWidth: 1 },
+  subtasksHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+  subtasksSectionTitle: { fontSize: 16, fontWeight: '700' },
+  subtasksCount: { fontSize: 12, fontWeight: '600' },
+  subtaskCard: { borderRadius: 12, padding: 14, marginBottom: 12, borderWidth: 1 },
+  subtaskHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  subtaskLabel: { fontSize: 14, fontWeight: '600' },
+  subtaskInput: { borderRadius: 10, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, marginBottom: 10 },
+  subtaskDescriptionInput: { minHeight: 70, textAlignVertical: 'top', marginBottom: 0 },
+  removeSubtaskButton: { width: 28, height: 28, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
+  addSubtaskButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 14, paddingHorizontal: 16, borderRadius: 12, borderWidth: 1.5, borderStyle: 'dashed', marginBottom: 12 },
+  addSubtaskText: { fontSize: 15, fontWeight: '600', marginLeft: 8 },
+  ctaContainer: { borderTopWidth: 1, paddingTop: 12, paddingBottom: 8, marginTop: 8 },
+  createButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 12, paddingVertical: 16, marginTop: 8 },
+  createButtonDisabled: { opacity: 0.7 },
+  createButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700', marginLeft: 8 },
+  bottomNav: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 72, flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', borderTopWidth: 1 },
+  navItem: { alignItems: 'center', justifyContent: 'center', paddingVertical: 8 },
+  navText: { fontSize: 11, fontWeight: '600', marginTop: 4 },
 });
