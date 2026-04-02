@@ -6,6 +6,7 @@ import { swaggerSpec } from './swagger';
 import authRoutes from './routes/auth';
 import taskRoutes from './routes/tasks';
 import aiRoutes from './routes/ai';
+import analyticsRoutes from './routes/analytics';
 import cors from 'cors';
 
 const app = express();
@@ -42,6 +43,7 @@ app.get('/api/docs', swaggerUi.setup(swaggerSpec, {
 app.use('/api', authRoutes);
 app.use('/api', taskRoutes);
 app.use('/api', aiRoutes);
+app.use('/api', analyticsRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -88,6 +90,9 @@ app.get('/', (req, res) => {
       },
       ai: {
         parseTask: 'POST /api/ai/parse-task',
+      },
+      analytics: {
+        summary: 'GET /api/analytics',
       },
     },
   });
