@@ -5,44 +5,112 @@ import {
   TextInput,
   StyleSheet,
   TextInputProps,
+  StyleProp,
+  TextStyle,
+  ViewStyle,
 } from "react-native";
-import theme from "../theme/theme";
+import { useTheme } from "../theme";
 
 type Props = TextInputProps & {
   label: string;
+  error?: string;
+  helperText?: string;
+  leftIcon?: React.ReactNode;
+  rightIcon?: React.ReactNode;
+  containerStyle?: StyleProp<ViewStyle>;
+  inputStyle?: StyleProp<TextStyle>;
+  labelStyle?: StyleProp<TextStyle>;
 };
 
-export default function AppInput({ label, ...props }: Props) {
+export default function AppInput({
+  label,
+  error,
+  helperText,
+  leftIcon,
+  rightIcon,
+  containerStyle,
+  inputStyle,
+  labelStyle,
+  ...props
+}: Props) {
+  const { colors } = useTheme();
+  const hasError = typeof error === "string" && error.length > 0;
+
   return (
-    <View style={styles.wrapper}>
-      <Text style={styles.label}>{label}</Text>
-      <TextInput
-        placeholderTextColor={theme.colors.subtext}
-        style={styles.input}
-        {...props}
-      />
+    <View style={[styles.wrapper, containerStyle]}>
+      <Text style={[styles.label, { color: colors.mutedText }, labelStyle]}>{label}</Text>
+      <View
+        style={[
+          styles.inputRow,
+          {
+            backgroundColor: colors.surface,
+            borderColor: hasError ? colors.danger : colors.border,
+          },
+        ]}
+      >
+        {leftIcon ? <View style={styles.leadingIcon}>{leftIcon}</View> : null}
+        <TextInput
+          placeholderTextColor={colors.mutedText}
+          style={[
+            styles.input,
+            {
+              color: colors.text,
+              paddingLeft: leftIcon ? 4 : 14,
+              paddingRight: rightIcon ? 6 : 14,
+            },
+            inputStyle,
+          ]}
+          accessibilityLabel={label}
+          {...props}
+        />
+        {rightIcon ? <View style={styles.trailingIcon}>{rightIcon}</View> : null}
+      </View>
+      {hasError ? <Text style={[styles.errorText, { color: colors.danger }]}>{error}</Text> : null}
+      {!hasError && helperText ? (
+        <Text style={[styles.helperText, { color: colors.mutedText }]}>{helperText}</Text>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   wrapper: {
-    marginBottom: theme.spacing.md,
+    marginBottom: 16,
   },
   label: {
-    color: theme.colors.text,
-    marginBottom: theme.spacing.xs,
-    fontSize: theme.fontSize.sm,
+    marginBottom: 6,
+    fontSize: 13,
     fontWeight: "600",
+  },
+  inputRow: {
+    minHeight: 54,
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: "row",
+    alignItems: "center",
   },
   input: {
     height: 54,
-    backgroundColor: theme.colors.inputBg,
-    borderRadius: theme.radius.lg,
-    paddingHorizontal: theme.spacing.md,
-    color: theme.colors.text,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    fontSize: theme.fontSize.md,
+    flex: 1,
+    fontSize: 15,
+  },
+  leadingIcon: {
+    paddingLeft: 12,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  trailingIcon: {
+    paddingRight: 12,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  helperText: {
+    marginTop: 6,
+    fontSize: 12,
+  },
+  errorText: {
+    marginTop: 6,
+    fontSize: 12,
+    fontWeight: "600",
   },
 });

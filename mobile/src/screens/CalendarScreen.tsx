@@ -1,6 +1,8 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import {
+  Animated,
   Alert,
+  Easing,
   Modal,
   Pressable,
   RefreshControl,
@@ -11,11 +13,13 @@ import {
   View,
 } from 'react-native';
 import { Calendar } from 'react-native-calendars';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../theme';
-import { deleteTaskById, getTasks, type Task } from '../config/api';
+import { deleteTaskById, getTasks, updateTask, type Task } from '../config/api';
+import ScreenWrapper from '../components/ScreenWrapper';
+import AnimatedTaskCard from '../components/AnimatedTaskCard';
+import AppButton from '../components/AppButton';
 
 type CalendarDot = { key: string; color: string };
 
@@ -49,16 +53,6 @@ const formatDisplayDate = (isoDate: string) => {
   });
 };
 
-const getSubtaskProgress = (task: Task) => {
-  const subtasks = task.subtasks ?? [];
-  if (subtasks.length === 0) return null;
-  const completed = subtasks.filter((subtask) => subtask.status === 'COMPLETED').length;
-  return `${completed}/${subtasks.length}`;
-};
-
-const getPriorityLabel = (priority: Task['priority']) =>
-  priority.charAt(0) + priority.slice(1).toLowerCase();
-
 export default function CalendarScreen({ navigation }: any) {
   const { colors } = useTheme();
 
@@ -72,6 +66,93 @@ export default function CalendarScreen({ navigation }: any) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showDateSheet, setShowDateSheet] = useState(false);
+  const [pendingSheetDate, setPendingSheetDate] = useState<string | null>(null);
+
+  const sheetTranslateY = React.useRef(new Animated.Value(28)).current;
+  const backdropOpacity = React.useRef(new Animated.Value(0)).current;
+  const openDelayRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    return () => {
+      if (openDelayRef.current) {
+        clearTimeout(openDelayRef.current);
+        openDelayRef.current = null;
+      }
+    };
+  }, []);
+
+  const animateSheetIn = useCallback(() => {
+    Animated.parallel([
+      Animated.timing(backdropOpacity, {
+        toValue: 1,
+        duration: 170,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(sheetTranslateY, {
+        toValue: 0,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [backdropOpacity, sheetTranslateY]);
+
+  const openDateSheet = useCallback(
+    (dateString: string, delayMs: number) => {
+      if (openDelayRef.current) {
+        clearTimeout(openDelayRef.current);
+      }
+
+      setPendingSheetDate(dateString);
+      openDelayRef.current = setTimeout(() => {
+        setShowDateSheet(true);
+      }, delayMs);
+    },
+    []
+  );
+
+  const closeDateSheet = useCallback(() => {
+    if (openDelayRef.current) {
+      clearTimeout(openDelayRef.current);
+      openDelayRef.current = null;
+    }
+
+    Animated.parallel([
+      Animated.timing(backdropOpacity, {
+        toValue: 0,
+        duration: 150,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(sheetTranslateY, {
+        toValue: 24,
+        duration: 170,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start(({ finished }) => {
+      if (finished) {
+        setShowDateSheet(false);
+      }
+    });
+  }, [backdropOpacity, sheetTranslateY]);
+
+  React.useEffect(() => {
+    if (!showDateSheet) return;
+
+    sheetTranslateY.setValue(28);
+    backdropOpacity.setValue(0);
+    animateSheetIn();
+  }, [showDateSheet, animateSheetIn, backdropOpacity, sheetTranslateY]);
+
+  React.useEffect(() => {
+    if (pendingSheetDate === null) return;
+    if (!showDateSheet) return;
+
+    setSelectedDate(pendingSheetDate);
+    setPendingSheetDate(null);
+  }, [pendingSheetDate, showDateSheet]);
 
   const loadTasks = useCallback(async (isPullRefresh = false) => {
     try {
@@ -190,76 +271,21 @@ export default function CalendarScreen({ navigation }: any) {
     ]);
   };
 
-  const TaskCard = ({ task, compact = false }: { task: Task; compact?: boolean }) => {
-    const dueTime = formatTime(task.dueAt);
-    const subtaskProgress = getSubtaskProgress(task);
-    const completed = isTaskCompleted(task);
-
-    return (
-      <Pressable
-        onPress={() => navigation.navigate('TaskDetails', { task })}
-        style={[
-          styles.taskCard,
-          {
-            backgroundColor: colors.surface,
-            borderColor: colors.border,
-            paddingVertical: compact ? 10 : 12,
-          },
-        ]}
-      >
-        <View style={styles.taskHeaderRow}>
-          <Text numberOfLines={2} style={[styles.taskTitle, { color: colors.text }]}>
-            {task.title}
-          </Text>
-          <TouchableOpacity
-            onPress={() => onDeleteTask(task.id)}
-            style={[styles.deleteButton, { borderColor: colors.border, backgroundColor: colors.background }]}
-            activeOpacity={0.7}
-          >
-            <MaterialIcons name="delete-outline" size={18} color={colors.danger} />
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.pillRow}>
-          <View
-            style={[
-              styles.pill,
-              {
-                backgroundColor: `${colors.primary}15`,
-                borderColor: `${colors.primary}40`,
-              },
-            ]}
-          >
-            <Text style={[styles.pillText, { color: colors.primary }]}>Priority: {getPriorityLabel(task.priority)}</Text>
-          </View>
-
-          <View
-            style={[
-              styles.pill,
-              {
-                backgroundColor: completed ? `${colors.mutedText}1A` : `${colors.primary}12`,
-                borderColor: completed ? `${colors.mutedText}33` : `${colors.primary}33`,
-              },
-            ]}
-          >
-            <Text style={[styles.pillText, { color: completed ? colors.mutedText : colors.primary }]}> 
-              {completed ? 'Completed' : 'Active'}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.taskMetaRow}>
-          <Text style={[styles.taskMeta, { color: colors.mutedText }]}>{dueTime ? dueTime : 'No time'}</Text>
-          {subtaskProgress ? (
-            <Text style={[styles.taskMeta, { color: colors.mutedText }]}>Subtasks: {subtaskProgress}</Text>
-          ) : null}
-        </View>
-      </Pressable>
-    );
+  const onStatusChange = async (
+    taskId: string,
+    newStatus: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'
+  ) => {
+    try {
+      const completedAt = newStatus === 'COMPLETED' ? new Date().toISOString() : null;
+      await updateTask(taskId, { status: newStatus, completedAt });
+      await loadTasks(false);
+    } catch (error: any) {
+      Alert.alert('Error', error?.message ?? 'Failed to update task status.');
+    }
   };
 
   return (
-    <SafeAreaView edges={['top']} style={[styles.container, { backgroundColor: colors.background }]}> 
+    <ScreenWrapper withHorizontalPadding={false}>
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => loadTasks(true)} tintColor={colors.primary} />}
@@ -279,8 +305,17 @@ export default function CalendarScreen({ navigation }: any) {
             markingType="multi-dot"
             markedDates={markedDates}
             onDayPress={(day: { dateString: string }) => {
-              setSelectedDate(day.dateString);
-              setShowDateSheet(true);
+              const nextDate = day.dateString;
+              const isDateChange = nextDate !== selectedDate;
+
+              setSelectedDate(nextDate);
+
+              // Keep selection immediate, but stage sheet opening so tap feels less abrupt.
+              if (showDateSheet) {
+                return;
+              }
+
+              openDateSheet(nextDate, isDateChange ? 120 : 60);
             }}
             style={{
               backgroundColor: colors.surface,
@@ -323,66 +358,80 @@ export default function CalendarScreen({ navigation }: any) {
             <Text style={[styles.emptyStateSubtitle, { color: colors.mutedText }]}>Tap a date to create one from the action sheet.</Text>
           </View>
         ) : (
-          selectedDateTasks.map((task) => <TaskCard key={task.id} task={task} />)
+          selectedDateTasks.map((task) => (
+            <AnimatedTaskCard
+              key={task.id}
+              task={task}
+              onPress={() => navigation.navigate('TaskDetails', { task })}
+              onStatusChange={onStatusChange}
+              onDelete={onDeleteTask}
+              formatDisplayDate={(value) => formatTime(value ?? null) ?? 'No time'}
+            />
+          ))
         )}
 
         <View style={{ height: 100 }} />
       </ScrollView>
 
-      <Modal transparent animationType="slide" visible={showDateSheet} onRequestClose={() => setShowDateSheet(false)}>
+      <Modal transparent animationType="none" visible={showDateSheet} onRequestClose={closeDateSheet}>
         <View style={styles.sheetOverlay}>
-          <Pressable style={styles.sheetBackdrop} onPress={() => setShowDateSheet(false)} />
-          <View style={[styles.sheetCard, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
+          <Animated.View style={[styles.sheetBackdrop, { opacity: backdropOpacity }]}>
+            <Pressable style={StyleSheet.absoluteFill} onPress={closeDateSheet} />
+          </Animated.View>
+          <Animated.View
+            style={[
+              styles.sheetCard,
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.border,
+                transform: [{ translateY: sheetTranslateY }],
+              },
+            ]}
+          > 
             <View style={styles.sheetHeaderRow}>
               <Text style={[styles.sheetTitle, { color: colors.text }]}>{formatDisplayDate(selectedDate)}</Text>
-              <TouchableOpacity onPress={() => setShowDateSheet(false)}>
+              <TouchableOpacity onPress={closeDateSheet}>
                 <MaterialIcons name="close" size={22} color={colors.mutedText} />
               </TouchableOpacity>
             </View>
 
-            <TouchableOpacity
-              style={[styles.createActionButton, { backgroundColor: colors.primary }]}
+            <AppButton
+              title="Create task for this date"
               onPress={() => {
-                setShowDateSheet(false);
+                closeDateSheet();
                 navigation.navigate('Create', { prefillDateIso: selectedDate });
               }}
-              activeOpacity={0.8}
-            >
-              <MaterialIcons name="add" size={20} color="white" />
-              <Text style={styles.createActionText}>Create task for this date</Text>
-            </TouchableOpacity>
+              leftIcon={<MaterialIcons name="add" size={20} color="#FFFFFF" />}
+              style={styles.createActionButton}
+            />
 
             {selectedDateTasks.length > 0 ? (
               <>
                 <Text style={[styles.sheetListTitle, { color: colors.text }]}>Tasks</Text>
                 <ScrollView style={{ maxHeight: 260 }}>
                   {selectedDateTasks.map((task) => (
-                    <TaskCard key={`sheet-${task.id}`} task={task} compact />
+                    <AnimatedTaskCard
+                      key={`sheet-${task.id}`}
+                      task={task}
+                      onPress={() => navigation.navigate('TaskDetails', { task })}
+                      onStatusChange={onStatusChange}
+                      onDelete={onDeleteTask}
+                      formatDisplayDate={(value) => formatTime(value ?? null) ?? 'No time'}
+                    />
                   ))}
                 </ScrollView>
               </>
             ) : (
               <Text style={[styles.sheetEmptyText, { color: colors.mutedText }]}>No tasks on this date yet.</Text>
             )}
-          </View>
+          </Animated.View>
         </View>
       </Modal>
-
-      {/* Manual QA checklist:
-          1) Pull to refresh loads tasks
-          2) Dates with tasks show dots
-          3) Tap date opens modal; Create Task navigates with prefilled date
-          4) Delete task updates list and date dots
-          5) Subtask completion rollback handled in TaskDetails/backend
-      */}
-    </SafeAreaView>
+    </ScreenWrapper>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
   content: {
     paddingHorizontal: 16,
     paddingBottom: 16,
@@ -423,54 +472,6 @@ const styles = StyleSheet.create({
   sectionSubtitle: {
     marginTop: 4,
     fontSize: 13,
-  },
-  taskCard: {
-    borderWidth: 1,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    marginBottom: 10,
-  },
-  taskHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
-  taskTitle: {
-    flex: 1,
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  deleteButton: {
-    borderWidth: 1,
-    borderRadius: 10,
-    padding: 6,
-  },
-  pillRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 8,
-  },
-  pill: {
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  pillText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  taskMetaRow: {
-    marginTop: 8,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  taskMeta: {
-    fontSize: 12,
-    fontWeight: '500',
   },
   loadingState: {
     paddingVertical: 24,
@@ -523,18 +524,6 @@ const styles = StyleSheet.create({
   },
   createActionButton: {
     marginTop: 12,
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-  },
-  createActionText: {
-    color: 'white',
-    fontWeight: '700',
-    fontSize: 14,
   },
   sheetListTitle: {
     marginTop: 14,

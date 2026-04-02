@@ -1,12 +1,13 @@
 {
   "expo": {
-    "name": "Prioritize",
+    "name": "mobile",
     "slug": "mobile",
+    "scheme": "prioritize",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "automatic",
-    "newArchEnabled": false,
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -14,33 +15,35 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.prioritize.app"
+      "bundleIdentifier": "com.london.prioritize",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.prioritize.app"
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "@react-native-community/datetimepicker",
+      "expo-web-browser",
       [
-        "expo-image-picker",
+        "@react-native-google-signin/google-signin",
         {
-          "photosPermission": "Allow Prioritize to access your photos.",
-          "cameraPermission": "Allow Prioritize to use your camera."
-        }
-      ],
-      [
-        "expo-calendar",
-        {
-          "calendarPermission": "Allow Prioritize to access your calendar."
+          "iosUrlScheme": "com.googleusercontent.apps.857743457833-t9fdc2a1gdgluk0gapo1fu839ejfge4h"
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "4d7852b5-0757-4fe8-ab54-d9baf872ea73"
+      }
+    }
   }
 }

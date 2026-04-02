@@ -1,46 +1,66 @@
-import React, { ReactNode, useRef } from "react";
+import React, { ReactNode } from "react";
 import {
-  Animated,
   Pressable,
   StyleSheet,
+  StyleProp,
   ViewStyle,
   PressableProps,
 } from "react-native";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from 'react-native-reanimated';
+import { SPRING_CONFIG } from './animationTokens';
 
 type Props = PressableProps & {
   children: ReactNode;
-  style?: ViewStyle | ViewStyle[];
+  style?: StyleProp<ViewStyle>;
+  disabled?: boolean;
+  pressScale?: number;
 };
 
 export default function AnimatedPressable({
   children,
   style,
+  disabled = false,
+  pressScale = 0.97,
   ...props
 }: Props) {
-  const scale = useRef(new Animated.Value(1)).current;
+  const scale = useSharedValue(1);
+  const opacity = useSharedValue(1);
+  const isDisabled = disabled;
 
-  const animateTo = (toValue: number) => {
-    Animated.spring(scale, {
-      toValue,
-      useNativeDriver: true,
-      friction: 6,
-      tension: 140,
-    }).start();
-  };
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+    opacity: opacity.value,
+  }));
 
   return (
     <Pressable
       {...props}
+      disabled={isDisabled}
       onPressIn={(e) => {
-        animateTo(0.96);
+        if (!isDisabled) {
+          scale.value = withSpring(Math.min(Math.max(pressScale, 0.9), 1), SPRING_CONFIG.press);
+          opacity.value = withSpring(0.9, SPRING_CONFIG.press);
+        }
         props.onPressIn?.(e);
       }}
       onPressOut={(e) => {
-        animateTo(1);
+        scale.value = withSpring(1, SPRING_CONFIG.press);
+        opacity.value = withSpring(1, SPRING_CONFIG.press);
         props.onPressOut?.(e);
       }}
     >
-      <Animated.View style={[styles.container, style, { transform: [{ scale }] }]}>
+      <Animated.View
+        style={[
+          styles.container,
+          style,
+          animatedStyle,
+          isDisabled ? styles.disabled : null,
+        ]}
+      >
         {children}
       </Animated.View>
     </Pressable>
@@ -50,5 +70,8 @@ export default function AnimatedPressable({
 const styles = StyleSheet.create({
   container: {
     overflow: "hidden",
+  },
+  disabled: {
+    opacity: 0.55,
   },
 });

@@ -1,7 +1,16 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useTheme } from '../theme/ThemeProvider';
+import Animated, {
+  FadeInUp,
+  useAnimatedStyle,
+  useSharedValue,
+  withSequence,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
+import { useTheme } from '../theme';
+import { ANIMATION_DURATION, ANIMATION_EASING, SPRING_CONFIG } from './animationTokens';
 
 type Subtask = {
   id: string;
@@ -38,9 +47,33 @@ const PRIORITY_COLORS: Record<string, string> = {
 export default function TaskCard({ task, onPress, onStatusChange, formatDueDate, formatDisplayDate, title: legacyTitle, category, completed: legacyCompleted, onDelete }: Props) {
   const { colors } = useTheme();
 
+  const pressScale = useSharedValue(1);
+  const completionPulse = useSharedValue(1);
+
+  const animatedCardStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: pressScale.value * completionPulse.value }],
+  }));
+
+  const isTaskCompleted = task?.status === 'COMPLETED';
+  const prevCompleted = useRef(isTaskCompleted);
+
+  useEffect(() => {
+    if (!task) return;
+    if (!prevCompleted.current && isTaskCompleted) {
+      completionPulse.value = withSequence(
+        withSpring(1.025, SPRING_CONFIG.gentle),
+        withTiming(1, { duration: ANIMATION_DURATION.fast, easing: ANIMATION_EASING.standard })
+      );
+    }
+    prevCompleted.current = !!isTaskCompleted;
+  }, [task, isTaskCompleted, completionPulse]);
+
   if (!task) {
     return (
-      <View style={[styles.legacyCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <Animated.View
+        entering={FadeInUp.duration(ANIMATION_DURATION.normal).easing(ANIMATION_EASING.standard)}
+        style={[styles.legacyCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+      >
         <View style={styles.legacyLeft}>
           <View style={[styles.dot, { backgroundColor: legacyCompleted ? colors.success : colors.primary }]} />
           <View>
@@ -53,7 +86,7 @@ export default function TaskCard({ task, onPress, onStatusChange, formatDueDate,
             <Text style={[styles.deleteText, { color: colors.danger }]}>Delete</Text>
           </TouchableOpacity>
         ) : null}
-      </View>
+      </Animated.View>
     );
   }
 
@@ -64,7 +97,21 @@ export default function TaskCard({ task, onPress, onStatusChange, formatDueDate,
   const completedSubs = subtasks.filter((s) => s.status === 'COMPLETED').length;
 
   return (
-    <TouchableOpacity style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]} onPress={onPress} activeOpacity={0.75}>
+    <Animated.View
+      entering={FadeInUp.duration(ANIMATION_DURATION.normal).easing(ANIMATION_EASING.standard)}
+    >
+    <Animated.View style={animatedCardStyle}>
+      <TouchableOpacity
+        style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
+        onPress={onPress}
+        activeOpacity={1}
+        onPressIn={() => {
+          pressScale.value = withSpring(0.985, SPRING_CONFIG.press);
+        }}
+        onPressOut={() => {
+          pressScale.value = withSpring(1, SPRING_CONFIG.press);
+        }}
+      >
       <View style={styles.topRow}>
         <TouchableOpacity onPress={() => onStatusChange?.(task.id, isCompleted ? 'TODO' : 'COMPLETED')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <MaterialIcons name={isCompleted ? 'check-circle' : 'radio-button-unchecked'} size={22} color={isCompleted ? colors.success : colors.mutedText} />
@@ -100,7 +147,9 @@ export default function TaskCard({ task, onPress, onStatusChange, formatDueDate,
           </Text>
         </View>
       </View>
-    </TouchableOpacity>
+      </TouchableOpacity>
+    </Animated.View>
+    </Animated.View>
   );
 }
 

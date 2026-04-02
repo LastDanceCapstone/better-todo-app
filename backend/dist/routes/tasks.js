@@ -50,6 +50,40 @@ const serializeTask = (task) => ({
         }))
         : task.subtasks,
 });
+const serializeSubtask = (subtask) => ({
+    ...subtask,
+    completedAt: subtask.completedAt ? subtask.completedAt.toISOString() : null,
+    createdAt: subtask.createdAt ? subtask.createdAt.toISOString() : null,
+    updatedAt: subtask.updatedAt ? subtask.updatedAt.toISOString() : null,
+});
+const recomputeParentTaskStatusFromSubtasks = async (taskId) => {
+    const subtasks = await prisma_1.prisma.subtask.findMany({
+        where: { taskId },
+        select: { status: true },
+    });
+    if (subtasks.length === 0) {
+        return prisma_1.prisma.task.findUnique({
+            where: { id: taskId },
+            include: { subtasks: true },
+        });
+    }
+    const allCompleted = subtasks.every((subtask) => subtask.status === 'COMPLETED');
+    const anyInProgress = subtasks.some((subtask) => subtask.status === 'IN_PROGRESS');
+    const nextStatus = allCompleted
+        ? 'COMPLETED'
+        : anyInProgress
+            ? 'IN_PROGRESS'
+            : 'TODO';
+    return prisma_1.prisma.task.update({
+        where: { id: taskId },
+        data: {
+            status: nextStatus,
+            statusChangedAt: new Date(),
+            completedAt: allCompleted ? new Date() : null,
+        },
+        include: { subtasks: true },
+    });
+};
 // Auth middleware
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
@@ -424,7 +458,8 @@ router.post('/tasks/:id/subtasks', authenticateToken, async (req, res) => {
                 taskId: id,
             },
         });
-        return res.status(201).json({ subtask });
+        await recomputeParentTaskStatusFromSubtasks(id);
+        return res.status(201).json({ subtask: serializeSubtask(subtask) });
     }
     catch (error) {
         console.error('Create subtask error:', error);
@@ -513,7 +548,11 @@ router.patch('/subtasks/:id', authenticateToken, async (req, res) => {
             where: { id },
             data: updateData,
         });
-        return res.json({ subtask });
+        const updatedTask = await recomputeParentTaskStatusFromSubtasks(existingSubtask.taskId);
+        return res.json({
+            subtask: serializeSubtask(subtask),
+            task: updatedTask ? serializeTask(updatedTask) : null,
+        });
     }
     catch (error) {
         console.error('Update subtask error:', error);
@@ -571,6 +610,7 @@ router.delete('/subtasks/:id', authenticateToken, async (req, res) => {
         await prisma_1.prisma.subtask.delete({
             where: { id },
         });
+        await recomputeParentTaskStatusFromSubtasks(existingSubtask.taskId);
         return res.json({ message: 'Subtask deleted successfully' });
     }
     catch (error) {

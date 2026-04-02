@@ -11,7 +11,10 @@ const swagger_1 = require("./swagger");
 const auth_1 = __importDefault(require("./routes/auth"));
 const tasks_1 = __importDefault(require("./routes/tasks"));
 const ai_1 = __importDefault(require("./routes/ai"));
+const notifications_1 = __importDefault(require("./routes/notifications"));
+const analytics_1 = __importDefault(require("./routes/analytics"));
 const cors_1 = __importDefault(require("cors"));
+const notificationScheduler_1 = require("./jobs/notificationScheduler");
 const app = (0, express_1.default)();
 const PORT = Number(process.env.PORT) || 3000;
 // Middleware
@@ -40,6 +43,8 @@ app.get('/api/docs', swagger_ui_express_1.default.setup(swagger_1.swaggerSpec, {
 app.use('/api', auth_1.default);
 app.use('/api', tasks_1.default);
 app.use('/api', ai_1.default);
+app.use('/api', notifications_1.default);
+app.use('/api', analytics_1.default);
 // Health check
 app.get('/api/health', (req, res) => {
     res.json({
@@ -84,9 +89,18 @@ app.get('/', (req, res) => {
             ai: {
                 parseTask: 'POST /api/ai/parse-task',
             },
+            notifications: {
+                getAll: 'GET /api/notifications',
+                create: 'POST /api/notifications',
+                markRead: 'PATCH /api/notifications/:id/read',
+            },
+            analytics: {
+                productivity: 'GET /api/analytics/productivity',
+            },
         },
     });
 });
+(0, notificationScheduler_1.initNotificationScheduler)();
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
     console.log(`Local access: http://localhost:${PORT}`);

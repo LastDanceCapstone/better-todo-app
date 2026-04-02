@@ -8,13 +8,31 @@ const express_1 = require("express");
 const bcrypt_1 = __importDefault(require("bcrypt"));
 const crypto_1 = __importDefault(require("crypto"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
+const google_auth_library_1 = require("google-auth-library");
 const prisma_1 = require("../prisma");
 const email_1 = require("../utils/email");
 const router = (0, express_1.Router)();
 const FORGOT_PASSWORD_WINDOW_MS = 15 * 60 * 1000;
 const FORGOT_PASSWORD_MAX_REQUESTS = 5;
+const GOOGLE_ISSUERS = new Set(['accounts.google.com', 'https://accounts.google.com']);
 const forgotPasswordIpBuckets = new Map();
 const forgotPasswordEmailBuckets = new Map();
+const googleClient = new google_auth_library_1.OAuth2Client();
+const createSessionToken = (userId, email) => {
+    return jsonwebtoken_1.default.sign({ userId, email }, process.env.JWT_SECRET, { expiresIn: '24h' });
+};
+const buildAuthResponse = (user, token, message = 'Login successful') => {
+    return {
+        message,
+        token,
+        user: {
+            id: user.id,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            email: user.email,
+        },
+    };
+};
 const pruneExpiredBuckets = (bucketMap, now) => {
     for (const [key, bucket] of bucketMap.entries()) {
         if (bucket.resetAt <= now) {
@@ -129,17 +147,8 @@ router.post('/register', async (req, res) => {
                 password: hashedPassword,
             },
         });
-        const token = jsonwebtoken_1.default.sign({ userId: user.id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '24h' });
-        res.status(201).json({
-            message: 'User created successfully',
-            token,
-            user: {
-                id: user.id,
-                firstName: user.firstName,
-                lastName: user.lastName,
-                email: user.email,
-            },
-        });
+        const token = createSessionToken(user.id, user.email);
+        res.status(201).json(buildAuthResponse(user, token, 'User created successfully'));
     }
     catch (error) {
         console.error('Registration error:', error);
@@ -199,25 +208,138 @@ router.post('/login', async (req, res) => {
         if (!user) {
             return res.status(401).json({ error: 'Invalid email or password' });
         }
+        if (!user.password) {
+            return res.status(401).json({ error: 'Invalid email or password' });
+        }
         const isValidPassword = await bcrypt_1.default.compare(password, user.password);
         if (!isValidPassword) {
             return res.status(401).json({ error: 'Invalid email or password' });
         }
-        const token = jsonwebtoken_1.default.sign({ userId: user.id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '24h' });
-        res.json({
-            message: 'Login successful',
-            token,
-            user: {
-                id: user.id,
-                firstName: user.firstName,
-                lastName: user.lastName,
-                email: user.email,
-            },
-        });
+        const token = createSessionToken(user.id, user.email);
+        res.json(buildAuthResponse(user, token));
     }
     catch (error) {
         console.error('Login error:', error);
         res.status(500).json({ error: 'Internal server error' });
+    }
+});
+/**
+ * @swagger
+ * /auth/google:
+ *   post:
+ *     tags: [Authentication]
+ *     summary: Sign in or sign up with Google
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - idToken
+ *             properties:
+ *               idToken:
+ *                 type: string
+ *                 description: Google ID token from client sign-in flow
+ *     responses:
+ *       200:
+ *         description: Login successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                 token:
+ *                   type: string
+ *                 user:
+ *                   $ref: '#/components/schemas/User'
+ *       400:
+ *         description: Missing token
+ *       401:
+ *         description: Invalid token or unverified email
+ */
+router.post('/auth/google', async (req, res) => {
+    console.log('Google auth route hit');
+    try {
+        const idToken = typeof req.body?.idToken === 'string' ? req.body.idToken.trim() : '';
+        if (!idToken) {
+            return res.status(400).json({ error: 'idToken is required' });
+        }
+        const googleClientId = process.env.GOOGLE_CLIENT_ID;
+        if (!googleClientId) {
+            console.error('GOOGLE_CLIENT_ID is not configured');
+            return res.status(500).json({ error: 'Google authentication is not configured' });
+        }
+        let payload;
+        try {
+            const ticket = await googleClient.verifyIdToken({
+                idToken,
+                audience: googleClientId,
+            });
+            payload = ticket.getPayload();
+        }
+        catch (tokenError) {
+            return res.status(401).json({ error: 'Invalid or expired Google token' });
+        }
+        if (!payload) {
+            return res.status(401).json({ error: 'Invalid or expired Google token' });
+        }
+        const issuer = payload.iss;
+        const exp = payload.exp;
+        const nowEpoch = Math.floor(Date.now() / 1000);
+        if (!issuer || !GOOGLE_ISSUERS.has(issuer)) {
+            return res.status(401).json({ error: 'Invalid or expired Google token' });
+        }
+        if (!exp || exp <= nowEpoch) {
+            return res.status(401).json({ error: 'Invalid or expired Google token' });
+        }
+        if (!payload.email_verified) {
+            return res.status(401).json({ error: 'Google account email is not verified' });
+        }
+        const email = typeof payload.email === 'string' ? payload.email.toLowerCase() : '';
+        const firstName = typeof payload.given_name === 'string' ? payload.given_name : null;
+        const lastName = typeof payload.family_name === 'string' ? payload.family_name : null;
+        const googleId = typeof payload.sub === 'string' ? payload.sub : '';
+        if (!email || !googleId) {
+            return res.status(401).json({ error: 'Invalid or expired Google token' });
+        }
+        const existingUser = await prisma_1.prisma.user.findUnique({
+            where: { email },
+        });
+        let user = existingUser;
+        if (existingUser) {
+            if (existingUser.googleId !== googleId) {
+                user = await prisma_1.prisma.user.update({
+                    where: { id: existingUser.id },
+                    data: {
+                        googleId,
+                    },
+                });
+            }
+        }
+        else {
+            user = await prisma_1.prisma.user.create({
+                data: {
+                    email,
+                    firstName,
+                    lastName,
+                    authProvider: 'google',
+                    googleId,
+                    password: null,
+                },
+            });
+        }
+        if (!user) {
+            return res.status(500).json({ error: 'Failed to authenticate user' });
+        }
+        const token = createSessionToken(user.id, user.email);
+        return res.json(buildAuthResponse(user, token));
+    }
+    catch (error) {
+        console.error('Google auth error:', error);
+        return res.status(500).json({ error: 'Internal server error' });
     }
 });
 router.post('/forgot-password', async (req, res) => {
@@ -348,6 +470,7 @@ router.get('/user/profile', authenticateToken, async (req, res) => {
                 firstName: true,
                 lastName: true,
                 email: true,
+                authProvider: true,
                 createdAt: true,
             },
         });
@@ -359,6 +482,88 @@ router.get('/user/profile', authenticateToken, async (req, res) => {
     catch (error) {
         console.error('Profile error:', error);
         res.status(500).json({ error: 'Internal server error' });
+    }
+});
+/**
+ * @swagger
+ * /user/profile:
+ *   patch:
+ *     tags: [Authentication]
+ *     summary: Update current user profile
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               firstName:
+ *                 type: string
+ *               lastName:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Profile updated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 user:
+ *                   $ref: '#/components/schemas/User'
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+router.patch('/user/profile', authenticateToken, async (req, res) => {
+    try {
+        const { firstName, lastName } = req.body;
+        const updateData = {};
+        if (typeof firstName === 'string') {
+            const trimmed = firstName.trim();
+            if (trimmed.length === 0 || trimmed.length > 100) {
+                return res.status(400).json({ error: 'First name must be between 1 and 100 characters' });
+            }
+            updateData.firstName = trimmed;
+        }
+        if (typeof lastName === 'string') {
+            const trimmed = lastName.trim();
+            if (trimmed.length === 0 || trimmed.length > 100) {
+                return res.status(400).json({ error: 'Last name must be between 1 and 100 characters' });
+            }
+            updateData.lastName = trimmed;
+        }
+        if (Object.keys(updateData).length === 0) {
+            return res.status(400).json({ error: 'No valid fields to update' });
+        }
+        const user = await prisma_1.prisma.user.update({
+            where: { id: req.user.userId },
+            data: updateData,
+            select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                authProvider: true,
+                createdAt: true,
+            },
+        });
+        return res.json({ user });
+    }
+    catch (error) {
+        console.error('Update profile error:', error);
+        return res.status(500).json({ error: 'Internal server error' });
     }
 });
 exports.default = router;

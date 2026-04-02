@@ -1,179 +1,418 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, Animated, TouchableOpacity } from 'react-native';
+import { useTheme } from '../theme';
+import { Swipeable } from 'react-native-gesture-handler';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useTheme } from '../theme/ThemeProvider';
+import SubtaskProgress from './SubtaskProgress';
 
-type Subtask = {
-  id: string;
-  title: string;
-  status: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
-};
-
-type Task = {
+interface Task {
   id: string;
   title: string;
   description?: string;
-  dueAt?: string;
+  dueAt?: string | null;
+  completedAt?: string | null;
+  statusChangedAt?: string | null;
   status: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
   priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
-  subtasks?: Subtask[];
-};
+  subtasks?: Array<{ id: string; title: string; status: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' }>;
+}
 
-type Props = {
+interface SwipeableTaskCardProps {
   task: Task;
-  onPress?: () => void;
-  onStatusChange?: (id: string, status: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED') => void;
-  onDelete?: (id: string) => void;
-  formatDueDate?: (date?: string) => string;
-  formatDisplayDate?: (date?: string) => string;
-};
-
-const PRIORITY_COLORS: Record<string, string> = {
-  URGENT: '#FF4D4D', HIGH: '#FF8C00', MEDIUM: '#F59E0B', LOW: '#22C55E',
-};
+  onPress: () => void;
+  onStatusChange: (taskId: string, newStatus: 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED') => void;
+  formatDueDate: (dueAt?: string) => string;
+  formatDisplayDate: (dueAt?: string) => string;
+  isTransitioning?: boolean;
+}
 
 export default function SwipeableTaskCard({
-  task, onPress, onStatusChange, onDelete, formatDueDate, formatDisplayDate,
-}: Props) {
+  task,
+  onPress,
+  onStatusChange,
+  formatDueDate,
+  formatDisplayDate,
+  isTransitioning = false,
+}: SwipeableTaskCardProps) {
   const { colors } = useTheme();
-  const isCompleted = task.status === 'COMPLETED';
-  const priorityColor = PRIORITY_COLORS[task.priority] ?? colors.mutedText;
-  const displayDate = formatDisplayDate?.(task.dueAt) ?? formatDueDate?.(task.dueAt) ?? '';
-  const subtasks = task.subtasks ?? [];
-  const completedSubs = subtasks.filter((s) => s.status === 'COMPLETED').length;
+  const swipeableRef = useRef<Swipeable>(null);
+  const swipeActive = useRef(new Animated.Value(0)).current;
+  const pressValue = useRef(new Animated.Value(0)).current;
+  const transitionValue = useRef(new Animated.Value(isTransitioning ? 1 : 0)).current;
+
+  const pressScale = pressValue.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 0.985],
+  });
+
+  const swipeScale = swipeActive.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 0.992],
+  });
+
+  const transitionScale = transitionValue.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 0.97],
+  });
+
+  const combinedScale = Animated.multiply(Animated.multiply(pressScale, swipeScale), transitionScale);
+
+  useEffect(() => {
+    if (!isTransitioning) {
+      transitionValue.setValue(0);
+      return;
+    }
+
+    Animated.sequence([
+      Animated.timing(transitionValue, {
+        toValue: 1,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+      Animated.timing(transitionValue, {
+        toValue: 0,
+        duration: 160,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [isTransitioning, transitionValue]);
+
+  // Right swipe action (for ACTIVE tasks -> mark as COMPLETED)
+  const renderRightActions = (
+    progress: Animated.AnimatedInterpolation<number>,
+    dragX: Animated.AnimatedInterpolation<number>
+  ) => {
+    const scale = progress.interpolate({
+      inputRange: [0, 0.6, 1],
+      outputRange: [0.84, 0.96, 1],
+      extrapolate: 'clamp',
+    });
+    const translateX = dragX.interpolate({
+      inputRange: [-140, -80, 0],
+      outputRange: [0, 6, 24],
+      extrapolate: 'clamp',
+    });
+    const opacity = progress.interpolate({
+      inputRange: [0, 0.25, 1],
+      outputRange: [0, 0.55, 1],
+      extrapolate: 'clamp',
+    });
+
+    return (
+      <View style={[styles.rightAction, { backgroundColor: `${colors.success}E6` }]}> 
+        <Animated.View
+          style={[
+            styles.actionContent,
+            {
+              opacity,
+              transform: [{ translateX }, { scale }],
+            },
+          ]}
+        >
+          <View style={[styles.actionIconWrap, { backgroundColor: 'rgba(255,255,255,0.2)' }]}>
+            <MaterialIcons name="check-circle" size={24} color="#FFFFFF" />
+          </View>
+          <Text style={[styles.actionText, { color: '#FFFFFF' }]}>Complete</Text>
+        </Animated.View>
+      </View>
+    );
+  };
+
+  // Left swipe action (for COMPLETED tasks -> mark as ACTIVE)
+  const renderLeftActions = (
+    progress: Animated.AnimatedInterpolation<number>,
+    dragX: Animated.AnimatedInterpolation<number>
+  ) => {
+    const scale = progress.interpolate({
+      inputRange: [0, 0.6, 1],
+      outputRange: [0.84, 0.96, 1],
+      extrapolate: 'clamp',
+    });
+    const translateX = dragX.interpolate({
+      inputRange: [0, 80, 140],
+      outputRange: [-24, -6, 0],
+      extrapolate: 'clamp',
+    });
+    const opacity = progress.interpolate({
+      inputRange: [0, 0.25, 1],
+      outputRange: [0, 0.55, 1],
+      extrapolate: 'clamp',
+    });
+
+    return (
+      <View style={[styles.leftAction, { backgroundColor: `${colors.primary}E6` }]}> 
+        <Animated.View
+          style={[
+            styles.actionContent,
+            {
+              opacity,
+              transform: [{ translateX }, { scale }],
+            },
+          ]}
+        >
+          <View style={[styles.actionIconWrap, { backgroundColor: 'rgba(255,255,255,0.2)' }]}>
+            <MaterialIcons name="undo" size={24} color="#FFFFFF" />
+          </View>
+          <Text style={[styles.actionText, { color: '#FFFFFF' }]}>Reactivate</Text>
+        </Animated.View>
+      </View>
+    );
+  };
+
+  const handleSwipeComplete = (direction: 'left' | 'right') => {
+    const newStatus = direction === 'right' ? 'COMPLETED' : 'TODO';
+    
+    // Directly change status without confirmation
+    onStatusChange(task.id, newStatus);
+    swipeableRef.current?.close();
+  };
 
   return (
-    <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-      <TouchableOpacity style={styles.inner} onPress={onPress} activeOpacity={0.75}>
-        {/* Top row */}
-        <View style={styles.topRow}>
-          <TouchableOpacity
-            onPress={() => onStatusChange?.(task.id, isCompleted ? 'TODO' : 'COMPLETED')}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <MaterialIcons
-              name={isCompleted ? 'check-circle' : 'radio-button-unchecked'}
-              size={22}
-              color={isCompleted ? colors.success : colors.mutedText}
-            />
-          </TouchableOpacity>
-
-          <Text
-            numberOfLines={2}
-            style={[
-              styles.title,
-              { color: colors.text },
-              isCompleted && { textDecorationLine: 'line-through', color: colors.mutedText },
-            ]}
-          >
-            {task.title}
-          </Text>
-
-          <View style={[styles.priorityBadge, { backgroundColor: `${priorityColor}20` }]}>
-            <Text style={[styles.priorityText, { color: priorityColor }]}>
-              {task.priority.charAt(0) + task.priority.slice(1).toLowerCase()}
+    <Swipeable
+      ref={swipeableRef}
+      renderRightActions={task.status === 'TODO' || task.status === 'IN_PROGRESS' ? renderRightActions : undefined}
+      renderLeftActions={task.status === 'COMPLETED' ? renderLeftActions : undefined}
+      onSwipeableOpen={(direction) => handleSwipeComplete(direction as 'left' | 'right')}
+      onSwipeableWillOpen={() => {
+        Animated.timing(swipeActive, {
+          toValue: 1,
+          duration: 130,
+          useNativeDriver: true,
+        }).start();
+      }}
+      onSwipeableWillClose={() => {
+        Animated.timing(swipeActive, {
+          toValue: 0,
+          duration: 130,
+          useNativeDriver: true,
+        }).start();
+      }}
+      onSwipeableOpenStartDrag={() => {
+        Animated.timing(swipeActive, {
+          toValue: 1,
+          duration: 90,
+          useNativeDriver: true,
+        }).start();
+      }}
+      onSwipeableCloseStartDrag={() => {
+        Animated.timing(swipeActive, {
+          toValue: 1,
+          duration: 90,
+          useNativeDriver: true,
+        }).start();
+      }}
+      overshootRight={false}
+      overshootLeft={false}
+      rightThreshold={72}
+      leftThreshold={72}
+      friction={1.8}
+    >
+      <Animated.View
+        style={[
+          styles.taskCard,
+          {
+            backgroundColor: colors.surface,
+            borderColor: colors.border,
+            transform: [{ scale: combinedScale }],
+            shadowOpacity: swipeActive.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0.11, 0.2],
+            }),
+            shadowRadius: swipeActive.interpolate({
+              inputRange: [0, 1],
+              outputRange: [8, 12],
+            }),
+            elevation: swipeActive.interpolate({
+              inputRange: [0, 1],
+              outputRange: [3, 7],
+            }),
+          },
+        ]}
+      >
+      <TouchableOpacity
+        onPress={onPress}
+        activeOpacity={1}
+        onPressIn={() => {
+          Animated.timing(pressValue, {
+            toValue: 1,
+            duration: 110,
+            useNativeDriver: true,
+          }).start();
+        }}
+        onPressOut={() => {
+          Animated.timing(pressValue, {
+            toValue: 0,
+            duration: 140,
+            useNativeDriver: true,
+          }).start();
+        }}
+      >
+        {/* Task Header */}
+        <View style={styles.headerRow}>
+          <View style={styles.textContent}>
+            <Text style={[styles.taskTitle, { color: colors.text }]}>{task.title}</Text>
+            <Text style={[styles.taskDescription, { color: colors.mutedText }]}>
+              {task.description || 'No description'}
             </Text>
           </View>
 
-          <TouchableOpacity
-            onPress={() => onDelete?.(task.id)}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <MaterialIcons name="delete-outline" size={20} color={colors.danger} />
-          </TouchableOpacity>
-        </View>
-
-        {/* Description */}
-        {task.description ? (
-          <Text numberOfLines={1} style={[styles.description, { color: colors.mutedText }]}>
-            {task.description}
-          </Text>
-        ) : null}
-
-        {/* Bottom row */}
-        <View style={styles.bottomRow}>
-          {task.dueAt ? (
-            <View style={styles.metaItem}>
-              <MaterialIcons name="event" size={13} color={colors.mutedText} />
-              <Text style={[styles.metaText, { color: colors.mutedText }]}>{displayDate}</Text>
-            </View>
-          ) : null}
-
-          {subtasks.length > 0 ? (
-            <View style={styles.metaItem}>
-              <MaterialIcons name="checklist" size={13} color={colors.mutedText} />
-              <Text style={[styles.metaText, { color: colors.mutedText }]}>
-                {completedSubs}/{subtasks.length}
+          {/* Priority Tag */}
+          {task.priority && (
+            <View style={[styles.badge, styles[`priority${task.priority}`]]}>
+              <Text style={[styles.badgeText, styles[`priorityText${task.priority}`]]}>
+                {task.priority}
               </Text>
             </View>
-          ) : null}
-
-          <View style={[styles.statusPill, { backgroundColor: isCompleted ? `${colors.success}18` : `${colors.primary}18` }]}>
-            <Text style={[styles.statusText, { color: isCompleted ? colors.success : colors.primary }]}>
-              {task.status.replace('_', ' ')}
-            </Text>
-          </View>
+          )}
         </View>
+
+        {/* Black Line */}
+        <View style={[styles.separator, { backgroundColor: colors.border }]} />
+
+        {/* Bottom Section */}
+        <View style={styles.taskFooter}>
+          {/* Left side: Days left */}
+          <View style={styles.dateInfo}>
+            <MaterialIcons name="access-time" size={16} color={colors.mutedText} />
+            <Text style={[styles.timeLeft, { color: colors.mutedText }]}>{formatDueDate(task.dueAt ?? undefined)}</Text>
+          </View>
+
+          {/* Right side: Due date */}
+          <Text style={[styles.dueDate, { color: colors.text }]}>
+            Due: {formatDisplayDate(task.dueAt ?? undefined)}
+          </Text>
+        </View>
+
+        {/* Subtask Progress Circle */}
+        {task.subtasks && task.subtasks.length > 0 && (
+          <View style={styles.progressContainer}>
+            <SubtaskProgress subtasks={task.subtasks} height={7} slantDegrees={-8} showLabel />
+          </View>
+        )}
       </TouchableOpacity>
-    </View>
+      </Animated.View>
+    </Swipeable>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {
+  taskCard: {
     borderRadius: 14,
-    borderWidth: 1,
+    padding: 16,
     marginHorizontal: 16,
-    marginBottom: 10,
-    overflow: 'hidden',
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.11,
+    shadowRadius: 8,
+    elevation: 3,
+    position: 'relative',
+    borderWidth: 1,
   },
-  inner: {
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  topRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
+  taskTitle: {
+    fontSize: 16,
+    fontWeight: '700',
     marginBottom: 4,
   },
-  title: {
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+  },
+  textContent: {
     flex: 1,
-    fontSize: 15,
-    fontWeight: '600',
+    flexShrink: 1,
+    paddingRight: 10,
   },
-  priorityBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
+  taskDescription: {
+    fontSize: 12,
+    marginTop: 2,
+    lineHeight: 17,
   },
-  priorityText: {
-    fontSize: 11,
+  separator: {
+    height: 1,
+    marginVertical: 10,
+  },
+  taskFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  dateInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  timeLeft: {
+    fontSize: 12,
+    marginLeft: 6,
+    fontWeight: '500',
+  },
+  dueDate: {
+    fontSize: 12,
     fontWeight: '700',
   },
-  description: {
-    fontSize: 13,
-    marginBottom: 8,
-    marginLeft: 32,
+  progressContainer: {
+    marginTop: 12,
+    width: '42%',
+    alignSelf: 'flex-start',
+    paddingTop: 4,
   },
-  bottomRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginLeft: 32,
-    flexWrap: 'wrap',
-  },
-  metaItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-  },
-  metaText: { fontSize: 12 },
-  statusPill: {
+  badge: {
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: 999,
-    marginLeft: 'auto',
+    borderRadius: 14,
+    marginTop: 2,
+    alignSelf: 'flex-start',
+    flexShrink: 0,
+    borderWidth: 1,
   },
-  statusText: { fontSize: 11, fontWeight: '700' },
+  badgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  priorityHIGH: { backgroundColor: 'rgba(239, 68, 68, 0.14)', borderColor: 'rgba(239, 68, 68, 0.35)' },
+  priorityMEDIUM: { backgroundColor: 'rgba(245, 158, 11, 0.14)', borderColor: 'rgba(245, 158, 11, 0.35)' },
+  priorityLOW: { backgroundColor: 'rgba(34, 197, 94, 0.14)', borderColor: 'rgba(34, 197, 94, 0.35)' },
+  priorityTextHIGH: { color: '#FF4D4D' },
+  priorityTextMEDIUM: { color: '#FFB800' },
+  priorityTextLOW: { color: '#00C853' },
+  priorityURGENT: { backgroundColor: 'rgba(225, 29, 72, 0.16)', borderColor: 'rgba(225, 29, 72, 0.4)' },
+  priorityTextURGENT: { color: '#FF1744' },
+  rightAction: {
+    borderTopRightRadius: 14,
+    borderBottomRightRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 116,
+    marginBottom: 12,
+    marginRight: 16,
+  },
+  leftAction: {
+    borderTopLeftRadius: 14,
+    borderBottomLeftRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 116,
+    marginBottom: 12,
+    marginLeft: 16,
+  },
+  actionContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  actionIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionText: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
 });

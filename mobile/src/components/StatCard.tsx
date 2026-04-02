@@ -1,17 +1,37 @@
 import React from "react";
-import { View, Text, StyleSheet } from "react-native";
-import theme from "../theme/theme";
+import { View, Text, StyleSheet, ViewStyle } from "react-native";
+import { useTheme } from "../theme";
 
 type Props = {
   label: string;
   value: string | number;
+  icon?: React.ReactNode;
+  helperText?: string;
+  trend?: "up" | "down" | "neutral";
+  style?: ViewStyle | ViewStyle[];
 };
 
-export default function StatCard({ label, value }: Props) {
+export default function StatCard({
+  label,
+  value,
+  icon,
+  helperText,
+  trend = "neutral",
+  style,
+}: Props) {
+  const { colors } = useTheme();
+
+  const trendColor =
+    trend === "up" ? colors.success : trend === "down" ? colors.danger : colors.mutedText;
+
   return (
-    <View style={styles.card}>
-      <Text style={styles.value}>{value}</Text>
-      <Text style={styles.label}>{label}</Text>
+    <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, style]}>
+      <View style={styles.headerRow}>
+        <Text style={[styles.value, { color: colors.text }]}>{value}</Text>
+        {icon ? <View style={styles.iconWrap}>{icon}</View> : null}
+      </View>
+      <Text style={[styles.label, { color: colors.mutedText }]}>{label}</Text>
+      {helperText ? <Text style={[styles.helper, { color: trendColor }]}>{helperText}</Text> : null}
     </View>
   );
 }
@@ -19,21 +39,32 @@ export default function StatCard({ label, value }: Props) {
 const styles = StyleSheet.create({
   card: {
     flex: 1,
-    backgroundColor: theme.colors.card,
-    borderRadius: theme.radius.lg,
-    padding: theme.spacing.md,
+    borderRadius: 14,
+    padding: 14,
     borderWidth: 1,
-    borderColor: theme.colors.border,
     marginHorizontal: 4,
+    minHeight: 96,
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  iconWrap: {
+    marginLeft: 8,
   },
   value: {
-    color: theme.colors.text,
-    fontSize: theme.fontSize.xl,
+    fontSize: 24,
     fontWeight: "800",
   },
   label: {
-    color: theme.colors.subtext,
     marginTop: 4,
-    fontSize: theme.fontSize.sm,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  helper: {
+    marginTop: 6,
+    fontSize: 12,
+    fontWeight: "500",
   },
 });

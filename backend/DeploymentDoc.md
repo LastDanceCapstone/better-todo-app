@@ -12,10 +12,11 @@
 2. [What Was Done](#what-was-done)
 3. [Architecture](#architecture)
 4. [Getting Started](#getting-started)
-5. [Development Workflow](#development-workflow)
-6. [Deployment Process](#deployment-process)
-7. [Troubleshooting](#troubleshooting)
-8. [Key Decisions](#key-decisions)
+5. [Google Authentication and iOS Development Setup](#google-authentication-and-ios-development-setup)
+6. [Development Workflow](#development-workflow)
+7. [Deployment Process](#deployment-process)
+8. [Troubleshooting](#troubleshooting)
+9. [Key Decisions](#key-decisions)
 
 ---
 
@@ -351,7 +352,32 @@ npm --version   # Should be 8+
 
 # Have Railway CLI installed
 npm install -g @railway/cli
+
+# Have EAS CLI installed (mobile development builds)
+npm install -g eas-cli
 ```
+
+### iOS Development Build Prerequisites
+
+For iOS development builds with EAS:
+
+1. Install EAS CLI globally:
+   ```bash
+   npm install -g eas-cli
+   ```
+2. Create an Expo account (one-time):
+   - Go to https://expo.dev/signup
+   - Complete account registration
+3. Authenticate with Expo/EAS:
+   ```bash
+   eas login
+   ```
+4. Build a development iOS app when needed:
+   ```bash
+   eas build --profile development --platform ios
+   ```
+
+Note: The platform flag is `ios` (not `io`).
 
 ### Initial Setup (One Time)
 
@@ -479,6 +505,105 @@ curl -X POST http://localhost:3000/api/tasks \
 
 ---
 
+## Google Authentication and iOS Development Setup
+
+### Overview of the Feature
+
+Google Authentication was added to Prioritize to reduce friction during onboarding and to provide users with an authentication option that aligns with modern mobile application expectations. While the existing email and password flow remains important for users who prefer traditional account creation, Google Sign-In offers a substantially faster path into the application because it eliminates manual credential creation, reduces password fatigue, and leverages an identity provider that many users already trust.
+
+From an engineering perspective, the feature also improves the overall security posture of the application. Instead of asking every user to create and manage another password, the system can rely on Google's identity verification and then issue its own JWT for application-level authorization. This preserves Prioritize's existing backend session model while allowing authentication to begin from a secure third-party identity provider. The result is a better user experience, lower sign-up friction, and a more contemporary authentication flow suitable for a production-ready capstone product.
+
+
+### Transition to Native Google Sign-In
+
+After the redirect-based flow failed, the implementation was reoriented toward the native Google Sign-In SDK using `@react-native-google-signin/google-signin`. This was the correct decision for two reasons. First, it aligns with how Google expects native mobile apps to authenticate users. Second, it fits the realities of Expo development builds, where native modules can be compiled into the application and invoked directly instead of depending on browser redirects.
+
+This transition changed the responsibility of the mobile application. Instead of opening a browser session and waiting for a redirect, the application now calls the native Google Sign-In module, allows the user to authenticate through the Google account picker, receives an ID token from the SDK, and sends that token to the Prioritize backend for verification. That design is cleaner and more robust because it separates responsibilities properly: Google handles identity, the native app handles token acquisition, and the backend handles verification plus application session creation.
+
+In the final implementation, a dedicated helper file, `mobile/src/config/googleSignIn.ts`, centralizes Google Sign-In configuration and behavior. This helper configures the SDK one time, extracts the returned ID token safely, and maps known SDK errors such as user cancellation, concurrent sign-in attempts, and service unavailability into readable application-level messages. Centralizing this logic reduced duplication in the UI layer and made the sign-in process easier to maintain.
+
+### iOS Development Setup and Native Testing Requirements
+
+Implementing Google Sign-In on iOS required significantly more setup than a purely JavaScript-based feature. Because the application depends on native modules and Apple platform signing rules, it was necessary to work within the Apple Developer ecosystem rather than relying exclusively on Expo Go. This introduced several operational requirements that became part of the engineering process.
+
+The project required enrollment in the Apple Developer Program so that the application could be built, signed, and installed on a physical iPhone as a proper development build. During setup, several expected iOS development issues emerged. These included missing code-signing certificates, device registration requirements, and the need to ensure that Developer Mode was enabled on the iPhone. These are not application logic problems, but they are essential deployment prerequisites when native iOS testing is involved.
+
+Expo Application Services (EAS) was used to manage these build requirements. The key command for the mobile workflow became:
+
+```bash
+eas build --profile development --platform ios
+```
+
+This command generates a development build that includes the application's native modules, bundle identifier, URL schemes, and plugin-based iOS configuration. Once the build is completed and installed on the test device, the normal development loop continues through Metro using `npx expo start --dev-client`. This workflow is particularly important because Expo Go does not include arbitrary native modules, which means that any feature depending on a custom native dependency cannot be validated there.
+
+### Native Module Integration Issue
+
+One of the most important debugging milestones during implementation was the runtime error `RNGoogleSignin could not be found`. This error clearly indicated that the JavaScript code was correct enough to attempt a module call, but the native iOS application did not actually contain the compiled Google Sign-In module.
+
+The root cause was that the native dependency had been installed in the JavaScript project, but the existing iOS build had been created before the module and its plugin configuration were added. In other words, the source code and the native application binary were out of sync. This is a common issue in Expo development when switching from a pure JavaScript feature to a native module.
+
+The solution required two coordinated actions. First, the Google Sign-In config plugin had to be added to `mobile/app.json`, including the `iosUrlScheme` derived from the Google iOS client configuration. Second, the application had to be rebuilt through EAS so that the iOS binary would include the native Google Sign-In implementation. Once the plugin was registered and the build was recreated, the runtime module resolution error disappeared because the development build finally matched the codebase.
+
+### Google Cloud Configuration
+
+Correct Google Cloud configuration was critical to the success of the feature. The implementation required a clear understanding of the difference between the Google OAuth credentials involved, because several identifiers appear similar but serve different purposes.
+
+The web client ID is primarily used when verifying the token audience on the backend and when configuring token issuance behavior in the mobile SDK. The iOS client ID identifies the native iOS application in Google's OAuth system and must correspond to the registered iOS app configuration. The reversed client ID, which typically begins with `com.googleusercontent.apps`, is used as the iOS URL scheme so that the native Google Sign-In flow can return control to the application correctly.
+
+These values were surfaced to the mobile application through environment variables such as `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` and `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`, while the backend relied on `GOOGLE_CLIENT_ID` for token verification. The implementation highlighted an important engineering lesson: authentication failures are often caused not by faulty business logic, but by subtle configuration mismatches between cloud credentials, bundle identifiers, URL schemes, and environment variables.
+
+### Frontend Integration
+
+On the frontend, the Google Sign-In implementation was designed to preserve the existing authentication success flow while replacing only the token acquisition mechanism. The login screen continues to store the returned JWT under `authToken`, store the user payload under `user`, and navigate to the main application entry point once authentication succeeds. This preserved consistency with the existing email and password login flow and avoided unnecessary architectural churn.
+
+The main change occurred inside the Google sign-in handler. Instead of invoking `expo-auth-session`, the login screen now calls the native helper exported from `googleSignIn.ts`. That helper configures the SDK, launches the native Google account flow, and returns a validated ID token. The login screen then sends that token to the backend endpoint at `POST /api/auth/google`.
+
+An additional frontend improvement was the hardening of response parsing and error handling. During debugging, the frontend encountered a `JSON Parse error: Unexpected character: <`, which indicated that the backend was returning an HTML error page instead of JSON. To make the mobile application more resilient, the implementation was changed to read `response.text()` first, attempt JSON parsing manually, log the raw response for debugging, and show a user-friendly alert when parsing fails. This change made the client far more robust when backend deployments, routing issues, or infrastructure errors cause non-JSON responses.
+
+### Backend Integration
+
+On the backend, Google Authentication was implemented by adding a `POST /auth/google` route inside the authentication router. Because the router is mounted through `app.use('/api', authRoutes)`, the full external endpoint becomes `POST /api/auth/google`, which is the URL consumed by the mobile application.
+
+The route accepts an `idToken` in the request body, validates that the token is present, and then verifies it through `google-auth-library` using `OAuth2Client`. The backend checks the token audience against `GOOGLE_CLIENT_ID`, validates the issuer, confirms that the token has not expired, and rejects unverified Google email accounts. Once the token is validated, the backend either finds the existing user by email or creates a new user record with the Google identity fields. After that, the backend generates the same style of JWT used by the rest of the Prioritize authentication system and returns a JSON response containing the token plus a normalized user payload.
+
+This design is important because it keeps Google-specific verification on the server, where credentials and trust decisions belong. The mobile client never directly grants itself access; it only presents a Google-issued ID token. The backend remains the authority that validates identity and issues the application's own access token.
+
+### Deployment Issue and Debugging Process
+
+One of the most instructive problems in the implementation process occurred after the route had been added locally but the production environment still responded with `Cannot POST /api/auth/google`. At first glance, this appeared to suggest a coding error in the route definition or a mistake in the frontend URL. However, inspection of the backend showed that the route existed, the router export was correct, and the router mounting in `index.ts` was also correct.
+
+The actual problem was deployment synchronization. Railway was still serving an older backend build that did not include the newly added Google authentication route. This is a subtle but common deployment issue in multi-service projects: local code may be correct, but the live environment can remain stale until the relevant service is rebuilt and redeployed.
+
+The debugging process benefited from several strategies. The route was instrumented with a `console.log('Google auth route hit')` statement to provide positive confirmation in Railway logs when the endpoint is reached. The frontend was modified to log HTTP status, content type, and raw response text so that HTML error pages could be distinguished from valid JSON API responses. In addition, the backend deployment configuration was updated so that production startup runs `prisma migrate deploy` before launching the server. This was necessary because the Google authentication work introduced schema changes, and route behavior can fail indirectly if the production database has not been migrated to match the current Prisma schema.
+
+From a deployment operations perspective, the project also reinforced how Railway behaves. Railway generally deploys from the connected GitHub repository and the branch configured in the Railway service settings. If the correct branch is not connected, or if local changes have not been pushed, production will continue serving the older revision. In cases where immediate deployment from local files is needed, the Railway CLI can also be used after linking the project, but Git-based deployment remains the standard team workflow.
+
+### Final Working Authentication Flow
+
+In the final production-ready design, the end-to-end flow is straightforward and well bounded. First, the user taps the Google Sign-In button in the mobile application. Second, the native Google Sign-In SDK opens the platform account flow and returns an ID token after successful authentication. Third, the mobile app sends that ID token to the Prioritize backend at `POST /api/auth/google`. Fourth, the backend verifies the token using Google's libraries and validates the account details. Fifth, the backend either creates the user or retrieves the existing account and then generates a Prioritize JWT. Finally, the backend returns the JWT and user payload, which the mobile app stores in `AsyncStorage` before navigating the user into the main application.
+
+This flow achieves a clean separation of concerns. Google establishes identity, the backend authorizes access to the Prioritize system, and the mobile client simply orchestrates the user interaction and token exchange. That separation makes the implementation easier to reason about, easier to secure, and easier to evolve over time.
+
+### Lessons Learned
+
+This implementation produced several practical engineering lessons. The first is that native authentication on mobile should be approached as a platform integration problem, not just a frontend coding task. Browser-based OAuth patterns that work well on the web or in simplified demos do not always translate cleanly to native mobile applications. Choosing the correct SDK early can prevent significant rework.
+
+The second lesson is that environment configuration is often just as important as application logic. Small mismatches in client IDs, URL schemes, bundle identifiers, or deployment variables can completely break a sign-in flow even when the underlying code is correct. Successful delivery therefore required disciplined verification of both source code and platform configuration.
+
+The third lesson is that deployment and schema synchronization matter as much as route implementation. A backend endpoint can be written correctly and still fail in production if the service was not redeployed or if the production database was not migrated. This became particularly clear when diagnosing the `Cannot POST /api/auth/google` error.
+
+Finally, the debugging process reinforced the value of defensive client behavior. Switching from a direct `response.json()` call to a text-first parsing approach made failures easier to diagnose and prevented the app from crashing on malformed responses. Combined with server-side logs, this created a much more reliable troubleshooting workflow.
+
+### Future Improvements
+
+Although the Google Sign-In feature is now functional and production-ready for the current capstone scope, several improvements would strengthen the system further. One future enhancement would be support for refresh tokens or longer-lived session renewal strategies so users do not need to sign in again as frequently. Another would be full Android support using the same backend verification model but platform-specific mobile configuration.
+
+The error handling experience can also continue to improve. The current implementation already captures raw responses and avoids JSON parsing crashes, but future iterations could classify infrastructure failures, token verification failures, and misconfiguration problems more explicitly for both users and developers. In addition, login analytics could be added to measure adoption of email/password login versus Google Sign-In, providing evidence for product decisions in future releases.
+
+Overall, the Google Authentication implementation represents more than a single new feature. It demonstrates the integration of cloud identity, native mobile tooling, backend verification, database evolution, and production deployment practices into one coherent workflow. That combination makes it a valuable case study within the Prioritize capstone project because it reflects the kinds of cross-stack engineering challenges that arise in real production systems.
+
+---
+
 ## Development Workflow
 
 ### Daily Development Process
@@ -493,9 +618,29 @@ curl -X POST http://localhost:3000/api/tasks \
 2. **Start Mobile App**
    ```bash
    cd mobile
-   npx expo start
+   # Normal daily workflow after the dev build is installed
+   npx expo start --dev-client
    ```
-   Scan QR code with Expo Go
+   Open the Prioritize development build on the simulator/device and connect to Metro.
+
+   If the iOS development app is not installed yet, or if native iOS configuration changed, run:
+   ```bash
+   eas build --profile development --platform ios
+   ```
+
+   Use `eas build --profile development --platform ios` again when needed, including these cases:
+   - the development app is not currently installed
+   - an iOS simulator/device build is needed again
+   - `app.json` scheme changed
+   - iOS bundle identifier changed
+   - native dependencies or plugins changed
+   - OAuth native configuration changed
+
+   Google Sign-In requires the development build, not Expo Go.
+   - Expo Go uses `exp://` redirects.
+   - Google rejects `exp://` redirects for this native OAuth flow.
+   - Prioritize uses a custom redirect such as `prioritize://oauthredirect`.
+   - Rebuild the app after changing `app.json` scheme, iOS bundle ID, or OAuth environment variables.
 
 3. **Make Changes**
    - Edit TypeScript files in `src/`

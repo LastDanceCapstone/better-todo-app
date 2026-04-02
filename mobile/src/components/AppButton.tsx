@@ -1,73 +1,109 @@
 import React from "react";
 import {
-  TouchableOpacity,
+  View,
   Text,
   StyleSheet,
   ActivityIndicator,
+  StyleProp,
+  TextStyle,
+  ViewStyle,
 } from "react-native";
-import theme from "../theme/theme";
+import { useTheme } from "../theme";
+import AnimatedPressable from "./AnimatedPressable";
 
 type Props = {
   title: string;
   onPress: () => void;
   loading?: boolean;
-  variant?: "primary" | "secondary" | "danger";
+  disabled?: boolean;
+  variant?: "primary" | "secondary" | "danger" | "ghost" | "outline";
+  leftIcon?: React.ReactNode;
+  rightIcon?: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+  textStyle?: StyleProp<TextStyle>;
 };
 
 export default function AppButton({
   title,
   onPress,
   loading = false,
+  disabled = false,
   variant = "primary",
+  leftIcon,
+  rightIcon,
+  style,
+  textStyle,
 }: Props) {
-  const buttonStyle =
+  const { colors } = useTheme();
+  const isDisabled = disabled || loading;
+
+  const variantStyles =
     variant === "secondary"
-      ? styles.secondary
+      ? { backgroundColor: colors.success, borderColor: colors.success, textColor: "#FFFFFF" }
       : variant === "danger"
-      ? styles.danger
-      : styles.primary;
+      ? { backgroundColor: colors.danger, borderColor: colors.danger, textColor: "#FFFFFF" }
+      : variant === "ghost"
+      ? { backgroundColor: "transparent", borderColor: "transparent", textColor: colors.primary }
+      : variant === "outline"
+      ? { backgroundColor: "transparent", borderColor: colors.border, textColor: colors.text }
+      : { backgroundColor: colors.primary, borderColor: colors.primary, textColor: "#FFFFFF" };
 
   return (
-    <TouchableOpacity
-      style={[styles.button, buttonStyle]}
+    <AnimatedPressable
+      style={[
+        styles.button,
+        {
+          backgroundColor: variantStyles.backgroundColor,
+          borderColor: variantStyles.borderColor,
+        },
+        isDisabled ? styles.disabled : null,
+        style,
+      ]}
       onPress={onPress}
-      activeOpacity={0.85}
-      disabled={loading}
+      disabled={isDisabled}
+      accessibilityRole="button"
+      pressScale={0.98}
     >
       {loading ? (
-        <ActivityIndicator color={theme.colors.white} />
+        <ActivityIndicator color={variantStyles.textColor} />
       ) : (
-        <Text style={styles.text}>{title}</Text>
+        <View style={styles.contentRow}>
+          {leftIcon ? <View style={styles.iconWrap}>{leftIcon}</View> : null}
+          <Text style={[styles.text, { color: variantStyles.textColor }, textStyle]}>{title}</Text>
+          {rightIcon ? <View style={styles.iconWrap}>{rightIcon}</View> : null}
+        </View>
       )}
-    </TouchableOpacity>
+    </AnimatedPressable>
   );
 }
 
 const styles = StyleSheet.create({
   button: {
     height: 54,
-    borderRadius: theme.radius.lg,
+    borderRadius: 14,
+    borderWidth: 1,
     justifyContent: "center",
     alignItems: "center",
-    marginTop: theme.spacing.sm,
+    marginTop: 10,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.18,
     shadowRadius: 16,
     elevation: 6,
   },
-  primary: {
-    backgroundColor: theme.colors.primary,
+  disabled: {
+    opacity: 0.65,
   },
-  secondary: {
-    backgroundColor: theme.colors.secondary,
+  contentRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  danger: {
-    backgroundColor: theme.colors.danger,
+  iconWrap: {
+    marginHorizontal: 6,
   },
   text: {
-    color: theme.colors.white,
-    fontSize: theme.fontSize.md,
+    fontSize: 16,
     fontWeight: "700",
   },
 });

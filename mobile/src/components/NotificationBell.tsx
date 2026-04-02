@@ -1,39 +1,44 @@
 import React, { useEffect, useRef } from "react";
-import { Animated, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { theme } from "../theme/theme";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSequence,
+  withSpring,
+} from 'react-native-reanimated';
+import { useTheme } from "../theme";
+import { SPRING_CONFIG } from './animationTokens';
 
 type Props = {
   count?: number;
 };
 
 export default function NotificationBell({ count = 0 }: Props) {
-  const scale = useRef(new Animated.Value(1)).current;
+  const { colors } = useTheme();
+  const previousCount = useRef(count);
+  const scale = useSharedValue(1);
+
+  const animatedBadgeStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
 
   useEffect(() => {
-    if (count > 0) {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(scale, {
-            toValue: 1.12,
-            duration: 500,
-            useNativeDriver: true,
-          }),
-          Animated.timing(scale, {
-            toValue: 1,
-            duration: 500,
-            useNativeDriver: true,
-          }),
-        ])
-      ).start();
+    const had = previousCount.current;
+    if (count > had && count > 0) {
+      scale.value = withSequence(
+        withSpring(1.16, SPRING_CONFIG.gentle),
+        withSpring(1, SPRING_CONFIG.gentle)
+      );
     }
+    previousCount.current = count;
   }, [count, scale]);
 
   return (
     <View style={styles.wrapper}>
-      <Ionicons name="notifications-outline" size={26} color={theme.colors.text} />
+      <Ionicons name="notifications-outline" size={26} color={colors.text} />
       {count > 0 && (
-        <Animated.View style={[styles.badge, { transform: [{ scale }] }]}>
+        <Animated.View style={[styles.badge, animatedBadgeStyle, { backgroundColor: colors.danger }]}> 
           <Text style={styles.badgeText}>{count > 9 ? "9+" : count}</Text>
         </Animated.View>
       )}
@@ -53,7 +58,6 @@ const styles = StyleSheet.create({
     minWidth: 18,
     height: 18,
     borderRadius: 9,
-    backgroundColor: theme.colors.danger,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 4,

@@ -1,52 +1,52 @@
-import React, { useEffect, useRef } from "react";
-import { Animated, Easing, StyleSheet, Text, View } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
-import { theme } from "../theme/theme";
+import React, { useEffect } from "react";
+import { StyleSheet, Text, View } from "react-native";
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+} from 'react-native-reanimated';
+import { useTheme } from '../theme';
+import { ANIMATION_DURATION, ANIMATION_EASING } from './animationTokens';
 
 export default function LoadingScreen() {
-  const spin = useRef(new Animated.Value(0)).current;
-  const pulse = useRef(new Animated.Value(0.92)).current;
+  const { colors } = useTheme();
+  const rotate = useSharedValue(0);
+  const pulse = useSharedValue(0.96);
+
+  const spinnerStyle = useAnimatedStyle(() => ({
+    transform: [
+      { rotate: `${rotate.value}deg` },
+      { scale: pulse.value },
+    ],
+  }));
 
   useEffect(() => {
-    Animated.loop(
-      Animated.timing(spin, {
-        toValue: 1,
-        duration: 1800,
+    rotate.value = withRepeat(
+      withTiming(360, {
+        duration: ANIMATION_DURATION.slow * 4,
         easing: Easing.linear,
-        useNativeDriver: true,
-      })
-    ).start();
+      }),
+      -1,
+      false
+    );
 
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, {
-          toValue: 1.05,
-          duration: 900,
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulse, {
-          toValue: 0.92,
-          duration: 900,
-          useNativeDriver: true,
-        }),
-      ])
-    ).start();
-  }, [spin, pulse]);
-
-  const rotate = spin.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["0deg", "360deg"],
-  });
+    pulse.value = withRepeat(
+      withTiming(1.04, {
+        duration: ANIMATION_DURATION.slow,
+        easing: ANIMATION_EASING.smooth,
+      }),
+      -1,
+      true
+    );
+  }, [rotate, pulse]);
 
   return (
-    <View style={styles.container}>
-      <Animated.View style={{ transform: [{ rotate }, { scale: pulse }] }}>
-        <LinearGradient
-          colors={[theme.colors.primary, theme.colors.primary2]}
-          style={styles.loader}
-        />
-      </Animated.View>
-      <Text style={styles.text}>Loading your productivity universe...</Text>
+    <View style={[styles.container, { backgroundColor: colors.background }]}> 
+      <Animated.View style={[styles.loader, { borderColor: colors.border, borderTopColor: colors.primary }, spinnerStyle]} />
+      <View style={[styles.dot, { backgroundColor: colors.primary }]} />
+      <Text style={[styles.text, { color: colors.mutedText }]}>Loading your productivity universe...</Text>
     </View>
   );
 }
@@ -54,19 +54,24 @@ export default function LoadingScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background,
     alignItems: "center",
     justifyContent: "center",
   },
   loader: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-    opacity: 0.95,
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    borderWidth: 4,
+  },
+  dot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginTop: 14,
+    opacity: 0.9,
   },
   text: {
-    marginTop: 18,
-    color: theme.colors.subtext,
+    marginTop: 14,
     fontSize: 15,
     fontWeight: "600",
   },
