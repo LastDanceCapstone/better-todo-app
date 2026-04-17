@@ -12,6 +12,13 @@ model User {
   firstName String?
   lastName  String?
   email     String   @unique
+  timezone  String   @default("UTC")
+  isVerified Boolean @default(false)
+  emailVerified Boolean @default(false)
+  emailVerificationToken String? @unique
+  emailVerificationExpiresAt DateTime?
+  emailVerificationSentAt DateTime?
+  avatarUrl String?
   password  String?
   authProvider AuthProvider @default(local)
   googleId  String? @unique
@@ -21,6 +28,9 @@ model User {
   updatedAt DateTime @updatedAt
   tasks     Task[]
   notifications Notification[]
+  notificationSettings NotificationSettings?
+  pushDevices PushDevice[]
+  focusSessions FocusSession[]
 
   @@map("users")
 }
@@ -38,6 +48,8 @@ model Task {
   updatedAt         DateTime  @updatedAt
   userId            String
   subtasks          Subtask[]
+  notifications     Notification[]
+  focusSessions     FocusSession[]
   user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("tasks")
@@ -90,16 +102,75 @@ enum NotificationType {
   EVENING_REVIEW
 }
 
+enum DevicePlatform {
+  IOS
+  ANDROID
+}
+
 model Notification {
   id        String           @id @default(cuid())
   userId    String
+  taskId    String?
   type      NotificationType
   title     String
   message   String
+  dedupeKey String?          @unique
   isRead    Boolean          @default(false)
   createdAt DateTime         @default(now())
   readAt    DateTime?
   user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  task      Task?            @relation(fields: [taskId], references: [id], onDelete: SetNull)
 
   @@map("notifications")
+}
+
+model NotificationSettings {
+  id                   String   @id @default(cuid())
+  userId               String   @unique
+  pushEnabled          Boolean  @default(true)
+  morningOverview      Boolean  @default(true)
+  eveningReview        Boolean  @default(true)
+  dueSoonNotifications Boolean  @default(true)
+  overdueNotifications Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notification_settings")
+}
+
+model PushDevice {
+  id               String         @id @default(cuid())
+  userId           String
+  installationId   String         @unique
+  expoPushToken    String         @unique
+  platform         DevicePlatform
+  deviceName       String?
+  appVersion       String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  lastRegisteredAt DateTime       @default(now())
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("push_devices")
+}
+
+model FocusSession {
+  id                     String   @id @default(cuid())
+  userId                 String
+  taskId                 String?
+  startedAt              DateTime
+  endedAt                DateTime
+  plannedDurationSeconds Int
+  actualDurationSeconds  Int
+  completed              Boolean  @default(false)
+  interrupted            Boolean  @default(false)
+  createdAt              DateTime @default(now())
+  user                   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  task                   Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  @@index([userId, startedAt])
+  @@index([taskId])
+  @@map("focus_sessions")
 }

@@ -1,9 +1,9 @@
 {
   "expo": {
-    "name": "mobile",
+    "name": "Prioritize",
     "slug": "mobile",
     "scheme": "prioritize",
-    "version": "1.0.0",
+    "version": "1.1.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -14,10 +14,13 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "com.london.prioritize",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSMicrophoneUsageDescription": "Prioritize uses your microphone so you can describe tasks with your voice.",
+        "NSCalendarsUsageDescription": "Prioritize uses Calendar access to sync your due-date tasks to your Apple Calendar and keep those events updated.",
+        "NSUserNotificationUsageDescription": "Prioritize sends reminders for upcoming and overdue tasks, plus optional daily summaries, so you can stay on track."
       }
     },
     "android": {
@@ -26,13 +29,18 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-web-browser",
+      "expo-notifications",
+      "@sentry/react-native/expo",
       [
         "@react-native-google-signin/google-signin",
         {

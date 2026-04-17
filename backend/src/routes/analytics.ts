@@ -1,25 +1,13 @@
 import { Router } from 'express';
-import jwt from 'jsonwebtoken';
-import { getProductivityAnalytics } from '../services/analytics';
+import { AnalyticsPeriod, getProductivityAnalytics } from '../services/analytics';
+import { authenticateToken } from '../middleware/auth';
+import { analyticsQueryValidation, createFocusSessionValidation } from '../middleware/validation';
+import { logger } from '../utils/logger';
+import { prisma } from '../prisma';
 
 const router = Router();
 
-const authenticateToken = (req: any, res: any, next: any) => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.split(' ')[1];
 
-  if (!token) {
-    return res.status(401).json({ error: 'Access token required' });
-  }
-
-  jwt.verify(token, process.env.JWT_SECRET!, (err: any, user: any) => {
-    if (err) {
-      return res.status(403).json({ error: 'Invalid or expired token' });
-    }
-    req.user = user;
-    next();
-  });
-};
 
 /**
  * @swagger
@@ -49,17 +37,91 @@ const authenticateToken = (req: any, res: any, next: any) => {
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.get('/analytics/productivity', authenticateToken, async (req: any, res) => {
+router.get('/analytics/productivity', authenticateToken, analyticsQueryValidation, async (req: any, res) => {
   try {
     const userId = req.user?.userId;
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const analytics = await getProductivityAnalytics(userId);
+    const rawStartDate = typeof req.query?.startDate === 'string' ? req.query.startDate : undefined;
+    const rawEndDate = typeof req.query?.endDate === 'string' ? req.query.endDate : undefined;
+    const rawPeriod = typeof req.query?.period === 'string' ? req.query.period : undefined;
+
+    const startDate = rawStartDate ? new Date(rawStartDate) : undefined;
+    const endDate = rawEndDate ? new Date(rawEndDate) : undefined;
+    const period: AnalyticsPeriod | undefined = rawPeriod === 'week' ? 'week' : rawPeriod === 'day' ? 'day' : undefined;
+
+    const analytics = await getProductivityAnalytics(userId, {
+      startDate,
+      endDate,
+      period,
+    });
     return res.json(analytics);
   } catch (error) {
-    console.error('GET /analytics/productivity error:', error);
+    logger.error('Productivity analytics retrieval failed');
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/analytics/focus-sessions', authenticateToken, createFocusSessionValidation, async (req: any, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const {
+      taskId,
+      startedAt,
+      endedAt,
+      plannedDurationSeconds,
+      actualDurationSeconds,
+      completed,
+      interrupted,
+    } = req.body;
+
+    const startedAtDate = new Date(startedAt);
+    const endedAtDate = new Date(endedAt);
+
+    if (endedAtDate < startedAtDate) {
+      return res.status(400).json({ error: 'endedAt must be greater than or equal to startedAt' });
+    }
+
+    if (taskId) {
+      const task = await prisma.task.findFirst({
+        where: {
+          id: taskId,
+          userId,
+        },
+        select: { id: true },
+      });
+
+      if (!task) {
+        return res.status(404).json({ error: 'Task not found' });
+      }
+    }
+
+    const session = await prisma.focusSession.create({
+      data: {
+        userId,
+        taskId: taskId || null,
+        startedAt: startedAtDate,
+        endedAt: endedAtDate,
+        plannedDurationSeconds,
+        actualDurationSeconds,
+        completed,
+        interrupted,
+      },
+      select: {
+        id: true,
+        createdAt: true,
+      },
+    });
+
+    return res.status(201).json({ session });
+  } catch (error) {
+    logger.error('Focus session analytics write failed');
     return res.status(500).json({ error: 'Internal server error' });
   }
 });

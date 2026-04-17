@@ -3,6 +3,7 @@ import { Appearance } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DarkTheme, DefaultTheme, Theme } from '@react-navigation/native';
 import { useTheme as useNavigationTheme } from '@react-navigation/native';
+import { logger } from '../utils/logger';
 
 export type ThemePreference = 'light' | 'dark' | 'system';
 export type ThemeVariant = 'light' | 'dark';
@@ -33,7 +34,7 @@ const lightTokens: ThemeTokens = {
   text: '#111827',
   mutedText: '#6B7280',
   border: '#E5E7EB',
-  primary: '#2563EB',
+  primary: '#004AAD',
   danger: '#FF4D4D',
   success: '#22C55E',
 };
@@ -44,7 +45,7 @@ const darkTokens: ThemeTokens = {
   text: '#F9FAFB',
   mutedText: '#94A3B8',
   border: '#1F2937',
-  primary: '#60A5FA',
+  primary: '#004AAD',
   danger: '#F87171',
   success: '#34D399',
 };
@@ -88,7 +89,7 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
           setThemePreferenceState(stored);
         }
       } catch (error) {
-        console.warn('Failed to load theme preference', error);
+        logger.warn('Failed to load theme preference');
       }
     };
 
@@ -106,7 +107,7 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
   const setThemePreference = useCallback((nextPreference: ThemePreference) => {
     setThemePreferenceState(nextPreference);
     AsyncStorage.setItem(THEME_PREFERENCE_KEY, nextPreference).catch((error) =>
-      console.warn('Failed to save theme preference', error)
+      logger.warn('Failed to save theme preference')
     );
   }, []);
 

@@ -1,4 +1,34 @@
-node_modules
-.expo
+# Dependencies
+node_modules/
+
+# Environment files
 .env
-.prisma
+.env.*
+!.env.example
+
+# OS/editor noise
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Caches and temporary outputs
+.cache/
+coverage/
+
+# Backend generated artifacts
+backend/dist/
+backend/coverage/
+backend/*.tsbuildinfo
+
+# Mobile generated artifacts
+mobile/.expo/
+mobile/.expo-shared/
+mobile/dist/
+mobile/web-build/
+mobile/coverage/
+mobile/*.tsbuildinfo

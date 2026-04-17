@@ -1,9 +1,12 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated, TouchableOpacity } from 'react-native';
 import { useTheme } from '../theme';
+import { useThemePreference } from '../theme';
 import { Swipeable } from 'react-native-gesture-handler';
 import { MaterialIcons } from '@expo/vector-icons';
 import SubtaskProgress from './SubtaskProgress';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
 
 interface Task {
   id: string;
@@ -26,6 +29,137 @@ interface SwipeableTaskCardProps {
   isTransitioning?: boolean;
 }
 
+const formatDueDateHelper = (dueAt?: string) => {
+  if (!dueAt) {
+    return 'No due date';
+  }
+
+  const date = new Date(dueAt);
+  const now = new Date();
+  const diffTime = date.getTime() - now.getTime();
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+  if (diffDays < 0) {
+    return 'Overdue';
+  }
+  if (diffDays === 0) {
+    return 'Due today';
+  }
+  if (diffDays === 1) {
+    return 'Due tomorrow';
+  }
+  return `${diffDays} days left`;
+};
+
+const isCompletedLate = (task: Task) => {
+  if (task.status !== 'COMPLETED' || !task.dueAt || !task.completedAt) {
+    return false;
+  }
+
+  return new Date(task.completedAt).getTime() > new Date(task.dueAt).getTime();
+};
+
+const getPriorityPalette = (priority: Task['priority']) => {
+  switch (priority) {
+    case 'URGENT':
+      return {
+        backgroundColor: 'rgba(185, 28, 28, 0.11)',
+        borderColor: 'rgba(185, 28, 28, 0.18)',
+        textColor: '#B91C1C',
+      };
+    case 'HIGH':
+      return {
+        backgroundColor: 'rgba(234, 88, 12, 0.11)',
+        borderColor: 'rgba(234, 88, 12, 0.18)',
+        textColor: '#C2410C',
+      };
+    case 'MEDIUM':
+      return {
+        backgroundColor: 'rgba(245, 158, 11, 0.12)',
+        borderColor: 'rgba(245, 158, 11, 0.18)',
+        textColor: '#B45309',
+      };
+    case 'LOW':
+    default:
+      return {
+        backgroundColor: 'rgba(34, 197, 94, 0.11)',
+        borderColor: 'rgba(34, 197, 94, 0.18)',
+        textColor: '#15803D',
+      };
+  }
+};
+
+const getStatusAppearance = (task: Task, colors: ReturnType<typeof useTheme>['colors']) => {
+  if (task.status === 'COMPLETED') {
+    if (isCompletedLate(task)) {
+      return {
+        icon: 'history-toggle-off' as const,
+        label: 'Completed late',
+        textColor: '#738A2B',
+        backgroundColor: 'rgba(139, 153, 42, 0.12)',
+        borderColor: 'rgba(139, 153, 42, 0.18)',
+        iconBackground: 'rgba(139, 153, 42, 0.16)',
+      };
+    }
+
+    return {
+      icon: 'task-alt' as const,
+      label: 'Completed',
+      textColor: colors.success,
+      backgroundColor: `${colors.success}14`,
+      borderColor: `${colors.success}24`,
+      iconBackground: `${colors.success}1F`,
+    };
+  }
+
+  const dueAt = task.dueAt ? new Date(task.dueAt) : null;
+  const now = new Date();
+
+  if (dueAt && dueAt.getTime() < now.getTime()) {
+    return {
+      icon: 'warning-amber' as const,
+      label: 'Overdue',
+      textColor: '#C9772B',
+      backgroundColor: 'rgba(201, 119, 43, 0.12)',
+      borderColor: 'rgba(201, 119, 43, 0.18)',
+      iconBackground: 'rgba(201, 119, 43, 0.16)',
+    };
+  }
+
+  const diffDays = dueAt ? Math.ceil((dueAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)) : null;
+  if (diffDays === 0) {
+    return {
+      icon: 'event-available' as const,
+      label: 'Due today',
+      textColor: colors.primary,
+      backgroundColor: `${colors.primary}12`,
+      borderColor: `${colors.primary}20`,
+      iconBackground: `${colors.primary}1A`,
+    };
+  }
+
+  return {
+    icon: 'schedule' as const,
+    label: formatDueDateHelper(task.dueAt ?? undefined),
+    textColor: colors.mutedText,
+    backgroundColor: 'rgba(148, 163, 184, 0.10)',
+    borderColor: 'rgba(148, 163, 184, 0.16)',
+    iconBackground: 'rgba(148, 163, 184, 0.14)',
+  };
+};
+
+const getCardGradient = (task: Task, isDark: boolean): readonly [string, string] => {
+  if (task.status === 'COMPLETED') {
+    return isDark ? ['#102117', '#0E1A13'] : ['#FBFEFC', '#F4FBF7'];
+  }
+
+  if (task.priority === 'URGENT' || task.priority === 'HIGH') {
+    return isDark ? ['#161E2D', '#101724'] : ['#FFFFFF', '#F7FAFF'];
+  }
+
+  return isDark ? ['#121C2E', '#0D1523'] : ['#FFFFFF', '#F8FBFF'];
+};
+
 export default function SwipeableTaskCard({
   task,
   onPress,
@@ -35,6 +169,7 @@ export default function SwipeableTaskCard({
   isTransitioning = false,
 }: SwipeableTaskCardProps) {
   const { colors } = useTheme();
+  const { currentTheme } = useThemePreference();
   const swipeableRef = useRef<Swipeable>(null);
   const swipeActive = useRef(new Animated.Value(0)).current;
   const pressValue = useRef(new Animated.Value(0)).current;
@@ -42,7 +177,7 @@ export default function SwipeableTaskCard({
 
   const pressScale = pressValue.interpolate({
     inputRange: [0, 1],
-    outputRange: [1, 0.985],
+    outputRange: [1, 0.982],
   });
 
   const swipeScale = swipeActive.interpolate({
@@ -56,6 +191,31 @@ export default function SwipeableTaskCard({
   });
 
   const combinedScale = Animated.multiply(Animated.multiply(pressScale, swipeScale), transitionScale);
+  const isDark = currentTheme === 'dark';
+  const priorityPalette = getPriorityPalette(task.priority);
+  const statusAppearance = getStatusAppearance(task, colors);
+  const cardGradient = getCardGradient(task, isDark);
+  const cardBorderColor =
+    task.status === 'COMPLETED'
+      ? `${colors.success}18`
+      : isDark
+        ? 'rgba(93, 113, 145, 0.22)'
+        : 'rgba(0, 74, 173, 0.08)';
+
+  const getStatusSummary = () => {
+    if (task.status !== 'COMPLETED') {
+      return formatDueDate(task.dueAt ?? undefined);
+    }
+
+    const dueAt = task.dueAt ? new Date(task.dueAt) : null;
+    const completedAt = task.completedAt ? new Date(task.completedAt) : null;
+
+    if (dueAt && completedAt && completedAt.getTime() > dueAt.getTime()) {
+      return 'Completed late';
+    }
+
+    return 'Completed';
+  };
 
   useEffect(() => {
     if (!isTransitioning) {
@@ -209,86 +369,115 @@ export default function SwipeableTaskCard({
     >
       <Animated.View
         style={[
-          styles.taskCard,
+          styles.taskCardShell,
           {
-            backgroundColor: colors.surface,
-            borderColor: colors.border,
             transform: [{ scale: combinedScale }],
+            shadowColor: isDark ? '#020617' : '#8EADE0',
             shadowOpacity: swipeActive.interpolate({
               inputRange: [0, 1],
-              outputRange: [0.11, 0.2],
+              outputRange: [0.1, 0.16],
             }),
             shadowRadius: swipeActive.interpolate({
               inputRange: [0, 1],
-              outputRange: [8, 12],
+              outputRange: [12, 15],
             }),
             elevation: swipeActive.interpolate({
               inputRange: [0, 1],
-              outputRange: [3, 7],
+              outputRange: [4, 6],
             }),
           },
         ]}
       >
       <TouchableOpacity
-        onPress={onPress}
+        style={styles.pressable}
+        onPress={() => {
+          void Haptics.selectionAsync().catch(() => undefined);
+          onPress();
+        }}
         activeOpacity={1}
         onPressIn={() => {
           Animated.timing(pressValue, {
             toValue: 1,
-            duration: 110,
+            duration: 90,
             useNativeDriver: true,
           }).start();
         }}
         onPressOut={() => {
-          Animated.timing(pressValue, {
+          Animated.spring(pressValue, {
             toValue: 0,
-            duration: 140,
+            tension: 200,
+            friction: 17,
             useNativeDriver: true,
           }).start();
         }}
       >
+        <LinearGradient colors={cardGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.taskCard, { borderColor: cardBorderColor }]}> 
         {/* Task Header */}
         <View style={styles.headerRow}>
           <View style={styles.textContent}>
             <Text style={[styles.taskTitle, { color: colors.text }]}>{task.title}</Text>
-            <Text style={[styles.taskDescription, { color: colors.mutedText }]}>
+            <Text numberOfLines={2} ellipsizeMode="tail" style={[styles.taskDescription, { color: colors.mutedText }]}> 
               {task.description || 'No description'}
             </Text>
           </View>
 
           {/* Priority Tag */}
           {task.priority && (
-            <View style={[styles.badge, styles[`priority${task.priority}`]]}>
-              <Text style={[styles.badgeText, styles[`priorityText${task.priority}`]]}>
+            <View
+              style={[
+                styles.badge,
+                {
+                  backgroundColor: priorityPalette.backgroundColor,
+                  borderColor: priorityPalette.borderColor,
+                },
+              ]}
+            >
+              <Text style={[styles.badgeText, { color: priorityPalette.textColor }]}> 
                 {task.priority}
               </Text>
             </View>
           )}
         </View>
 
-        {/* Black Line */}
-        <View style={[styles.separator, { backgroundColor: colors.border }]} />
+        <View style={[styles.separator, { backgroundColor: isDark ? 'rgba(148, 163, 184, 0.14)' : 'rgba(0, 74, 173, 0.08)' }]} />
 
-        {/* Bottom Section */}
         <View style={styles.taskFooter}>
-          {/* Left side: Days left */}
-          <View style={styles.dateInfo}>
-            <MaterialIcons name="access-time" size={16} color={colors.mutedText} />
-            <Text style={[styles.timeLeft, { color: colors.mutedText }]}>{formatDueDate(task.dueAt ?? undefined)}</Text>
+          <View
+            style={[
+              styles.statusPill,
+              {
+                backgroundColor: statusAppearance.backgroundColor,
+                borderColor: statusAppearance.borderColor,
+              },
+            ]}
+          >
+            <View style={[styles.statusIconWrap, { backgroundColor: statusAppearance.iconBackground }]}>
+              <MaterialIcons name={statusAppearance.icon} size={13} color={statusAppearance.textColor} />
+            </View>
+            <Text style={[styles.timeLeft, { color: statusAppearance.textColor }]}> 
+              {statusAppearance.label}
+            </Text>
           </View>
 
           {/* Right side: Due date */}
-          <Text style={[styles.dueDate, { color: colors.text }]}>
-            Due: {formatDisplayDate(task.dueAt ?? undefined)}
-          </Text>
+          {task.status === 'COMPLETED' && task.completedAt ? (
+            <Text style={[styles.dueDate, { color: colors.text }]}> 
+              Completed: {formatDisplayDate(task.completedAt ?? undefined)}
+            </Text>
+          ) : (
+            <Text style={[styles.dueDate, { color: colors.text }]}> 
+              Due: {formatDisplayDate(task.dueAt ?? undefined)}
+            </Text>
+          )}
         </View>
 
         {/* Subtask Progress Circle */}
         {task.subtasks && task.subtasks.length > 0 && (
           <View style={styles.progressContainer}>
-            <SubtaskProgress subtasks={task.subtasks} height={7} slantDegrees={-8} showLabel />
+            <SubtaskProgress subtasks={task.subtasks} height={8} slantDegrees={0} showLabel />
           </View>
         )}
+        </LinearGradient>
       </TouchableOpacity>
       </Animated.View>
     </Swipeable>
@@ -296,23 +485,28 @@ export default function SwipeableTaskCard({
 }
 
 const styles = StyleSheet.create({
-  taskCard: {
-    borderRadius: 14,
-    padding: 16,
+  taskCardShell: {
     marginHorizontal: 16,
     marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.11,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 7 },
+    position: 'relative',
+  },
+  pressable: {
+    borderRadius: 20,
+  },
+  taskCard: {
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 15,
+    overflow: 'hidden',
     position: 'relative',
     borderWidth: 1,
   },
   taskTitle: {
     fontSize: 16,
-    fontWeight: '700',
-    marginBottom: 4,
+    fontWeight: '800',
+    marginBottom: 6,
+    lineHeight: 21,
   },
   headerRow: {
     flexDirection: 'row',
@@ -322,47 +516,63 @@ const styles = StyleSheet.create({
   textContent: {
     flex: 1,
     flexShrink: 1,
-    paddingRight: 10,
+    paddingRight: 9,
   },
   taskDescription: {
-    fontSize: 12,
-    marginTop: 2,
+    fontSize: 13,
+    marginTop: 0,
     lineHeight: 17,
   },
   separator: {
     height: 1,
-    marginVertical: 10,
+    marginVertical: 11,
   },
   taskFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 6,
+    gap: 8,
   },
-  dateInfo: {
+  statusPill: {
     flexDirection: 'row',
     alignItems: 'center',
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingLeft: 5,
+    paddingRight: 9,
+    paddingVertical: 4,
+    gap: 5,
+  },
+  statusIconWrap: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   timeLeft: {
-    fontSize: 12,
-    marginLeft: 6,
-    fontWeight: '500',
+    fontSize: 11,
+    fontWeight: '600',
   },
   dueDate: {
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 11,
+    fontWeight: '600',
+    maxWidth: '54%',
+    textAlign: 'right',
+    lineHeight: 15,
   },
   progressContainer: {
-    marginTop: 12,
-    width: '42%',
+    marginTop: 6,
+    width: '48%',
     alignSelf: 'flex-start',
-    paddingTop: 4,
+    paddingTop: 0,
   },
   badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 14,
-    marginTop: 2,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    marginTop: 1,
     alignSelf: 'flex-start',
     flexShrink: 0,
     borderWidth: 1,
@@ -370,16 +580,8 @@ const styles = StyleSheet.create({
   badgeText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#FFFFFF',
+    letterSpacing: 0.4,
   },
-  priorityHIGH: { backgroundColor: 'rgba(239, 68, 68, 0.14)', borderColor: 'rgba(239, 68, 68, 0.35)' },
-  priorityMEDIUM: { backgroundColor: 'rgba(245, 158, 11, 0.14)', borderColor: 'rgba(245, 158, 11, 0.35)' },
-  priorityLOW: { backgroundColor: 'rgba(34, 197, 94, 0.14)', borderColor: 'rgba(34, 197, 94, 0.35)' },
-  priorityTextHIGH: { color: '#FF4D4D' },
-  priorityTextMEDIUM: { color: '#FFB800' },
-  priorityTextLOW: { color: '#00C853' },
-  priorityURGENT: { backgroundColor: 'rgba(225, 29, 72, 0.16)', borderColor: 'rgba(225, 29, 72, 0.4)' },
-  priorityTextURGENT: { color: '#FF1744' },
   rightAction: {
     borderTopRightRadius: 14,
     borderBottomRightRadius: 14,

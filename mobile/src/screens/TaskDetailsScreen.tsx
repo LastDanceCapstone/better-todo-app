@@ -16,12 +16,21 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LinearGradient } from 'expo-linear-gradient';
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
-import { useTheme } from '../theme';
-import { deleteTaskById, updateTask } from '../config/api';
-
-const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
+import { useFocusEffect } from '@react-navigation/native';
+import { useTheme, useThemePreference } from '../theme';
+import {
+  ApiError,
+  createSubtaskForTask,
+  deleteSubtaskById,
+  deleteTaskById,
+  getTaskById,
+  getUserFriendlyErrorMessage,
+  updateSubtaskById,
+  updateTask,
+} from '../config/api';
+import { logger } from '../utils/logger';
 
 type Subtask = {
   id: string;
@@ -54,10 +63,21 @@ type EditableSubtask = {
   isDeleted?: boolean;
 };
 
-export default function TaskDetailsScreen({ route, navigation }: any) {
+type TaskDetailsScreenProps = {
+  route: any;
+  navigation: any;
+  onUnauthorized?: () => void;
+};
+
+export default function TaskDetailsScreen({ route, navigation, onUnauthorized }: TaskDetailsScreenProps) {
   const { colors } = useTheme();
+  const { currentTheme } = useThemePreference();
+  const isDark = currentTheme === 'dark';
+  const taskId = route.params?.task?.id || route.params?.taskId;
   const [task, setTask] = useState<Task | null>(route.params?.task || null);
   const [loading, setLoading] = useState(false);
+  const [loadingTask, setLoadingTask] = useState(false);
+  const [screenError, setScreenError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   
   // Editable fields
@@ -70,8 +90,80 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
   const [datePickerMode, setDatePickerMode] = useState<'date' | 'time'>('date');
   const [localDueAtIso, setLocalDueAtIso] = useState<string>(task?.dueAt || '');
   const [savingDueAt, setSavingDueAt] = useState(false);
+  const [focusedField, setFocusedField] = useState<string | null>(null);
   const modalOpacity = useRef(new Animated.Value(0)).current;
   const modalTranslateY = useRef(new Animated.Value(40)).current;
+  const primaryActionScale = useRef(new Animated.Value(1)).current;
+  const secondaryActionScale = useRef(new Animated.Value(1)).current;
+  const deleteActionScale = useRef(new Animated.Value(1)).current;
+
+  const backgroundGradient = isDark
+    ? (['#0B1220', '#121A2B'] as const)
+    : (['#F8FAFF', '#EEF3FB'] as const);
+
+  const elevatedSurface = isDark ? 'rgba(17, 27, 44, 0.9)' : 'rgba(255, 255, 255, 0.92)';
+  const cardBorder = isDark ? 'rgba(99, 124, 160, 0.26)' : 'rgba(0, 74, 173, 0.1)';
+
+  const animateActionScale = (value: Animated.Value, toValue: number) => {
+    Animated.spring(value, {
+      toValue,
+      tension: 220,
+      friction: 18,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handleUnauthorized = () => {
+    if (onUnauthorized) {
+      onUnauthorized();
+      return;
+    }
+
+    Alert.alert('Session expired', 'Please log in again.', [
+      {
+        text: 'OK',
+        onPress: () => navigation.goBack(),
+      },
+    ]);
+  };
+
+  const refreshTask = async () => {
+    if (!taskId) {
+      setScreenError('Task not found');
+      setTask(null);
+      return;
+    }
+
+    try {
+      setLoadingTask(true);
+      setScreenError(null);
+      const freshTask = await getTaskById(taskId);
+      setTask(freshTask as Task);
+    } catch (error: any) {
+      if (error instanceof ApiError) {
+        if (error.status === 401) {
+          handleUnauthorized();
+          return;
+        }
+
+        if (error.status === 404) {
+          setTask(null);
+          setScreenError('Task not found');
+          return;
+        }
+      }
+
+      setScreenError(getUserFriendlyErrorMessage(error, 'Failed to load task details'));
+    } finally {
+      setLoadingTask(false);
+    }
+  };
+
+  useFocusEffect(
+    React.useCallback(() => {
+      void refreshTask();
+    }, [taskId])
+  );
 
   useEffect(() => {
     if (task) {
@@ -132,8 +224,8 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
       const updatedTask = await updateTask(task.id, { dueAt: nextDueAt });
       setTask(updatedTask as Task);
       setLocalDueAtIso(updatedTask?.dueAt || '');
-    } catch (error: any) {
-      Alert.alert('Error', error?.message ?? 'Failed to update due date');
+    } catch (error: unknown) {
+      Alert.alert('Error', getUserFriendlyErrorMessage(error, 'Failed to update due date'));
     } finally {
       setSavingDueAt(false);
     }
@@ -260,12 +352,14 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
   // Get priority color
   const getPriorityColor = (priority?: string) => {
     switch (priority) {
+      case 'URGENT':
+        return '#B91C1C';
       case 'HIGH':
-        return '#FF4D4D';
+        return '#EA580C';
       case 'MEDIUM':
-        return '#FFB800';
+        return '#004AAD';
       case 'LOW':
-        return '#00C853';
+        return '#6B7280';
       default:
         return '#9CA3AF';
     }
@@ -274,15 +368,46 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
   // Get priority background color
   const getPriorityBgColor = (priority?: string) => {
     switch (priority) {
+      case 'URGENT':
+        return isDark ? 'rgba(185, 28, 28, 0.24)' : 'rgba(185, 28, 28, 0.13)';
       case 'HIGH':
-        return 'rgba(255, 77, 77, 0.1)';
+        return isDark ? 'rgba(234, 88, 12, 0.24)' : 'rgba(234, 88, 12, 0.13)';
       case 'MEDIUM':
-        return 'rgba(255, 184, 0, 0.1)';
+        return isDark ? 'rgba(0, 74, 173, 0.24)' : 'rgba(0, 74, 173, 0.13)';
       case 'LOW':
-        return 'rgba(0, 200, 83, 0.1)';
+        return isDark ? 'rgba(107, 114, 128, 0.24)' : 'rgba(107, 114, 128, 0.12)';
       default:
-        return 'rgba(156, 163, 175, 0.1)';
+        return isDark ? 'rgba(156, 163, 175, 0.24)' : 'rgba(156, 163, 175, 0.12)';
     }
+  };
+
+  const getDueTone = () => {
+    if (!localDueAtIso) {
+      return {
+        cardBg: isDark ? 'rgba(16, 27, 43, 0.82)' : 'rgba(246, 250, 255, 0.92)',
+        iconBg: isDark ? 'rgba(0, 74, 173, 0.24)' : 'rgba(0, 74, 173, 0.12)',
+        border: cardBorder,
+        iconColor: '#004AAD',
+      };
+    }
+
+    const due = new Date(localDueAtIso);
+    const overdue = !Number.isNaN(due.getTime()) && due.getTime() < Date.now();
+    if (overdue) {
+      return {
+        cardBg: isDark ? 'rgba(127, 29, 29, 0.22)' : 'rgba(251, 191, 36, 0.16)',
+        iconBg: isDark ? 'rgba(217, 119, 6, 0.26)' : 'rgba(217, 119, 6, 0.14)',
+        border: isDark ? 'rgba(217, 119, 6, 0.34)' : 'rgba(217, 119, 6, 0.22)',
+        iconColor: '#C2410C',
+      };
+    }
+
+    return {
+      cardBg: isDark ? 'rgba(16, 27, 43, 0.84)' : 'rgba(246, 250, 255, 0.94)',
+      iconBg: isDark ? 'rgba(0, 74, 173, 0.24)' : 'rgba(0, 74, 173, 0.12)',
+      border: cardBorder,
+      iconColor: '#004AAD',
+    };
   };
 
   // Update subtask in edit mode
@@ -346,12 +471,6 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
 
     try {
       setLoading(true);
-      const token = await AsyncStorage.getItem('authToken');
-      
-      if (!token) {
-        Alert.alert('Error', 'No authentication token found');
-        return;
-      }
 
       // Use shared update helper so sync hooks stay centralized.
       await updateTask(task.id, {
@@ -365,25 +484,11 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
         if (subtask.id.startsWith('temp_')) continue; // Skip new subtasks for now
 
         if (subtask.isDeleted) {
-          // Delete subtask
-          await fetch(`${API_BASE_URL}/api/subtasks/${subtask.id}`, {
-            method: 'DELETE',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-            },
-          });
+          await deleteSubtaskById(subtask.id);
         } else {
-          // Update subtask
-          await fetch(`${API_BASE_URL}/api/subtasks/${subtask.id}`, {
-            method: 'PATCH',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              title: subtask.title,
-              description: subtask.description,
-            }),
+          await updateSubtaskById(subtask.id, {
+            title: subtask.title,
+            description: subtask.description,
           });
         }
       }
@@ -391,32 +496,13 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
       // Create new subtasks
       const newSubtasks = editSubtasks.filter(st => st.id.startsWith('temp_') && !st.isDeleted);
       for (const subtask of newSubtasks) {
-        await fetch(`${API_BASE_URL}/api/tasks/${task.id}/subtasks`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            title: subtask.title,
-            description: subtask.description,
-          }),
+        await createSubtaskForTask(task.id, {
+          title: subtask.title,
+          description: subtask.description,
         });
       }
 
-      // Fetch updated task
-      const updatedResponse = await fetch(`${API_BASE_URL}/api/tasks/${task.id}`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (updatedResponse.ok) {
-        const data = await updatedResponse.json();
-        setTask(data.task);
-      }
+      await refreshTask();
 
       setIsEditing(false);
       Alert.alert('Success', 'Changes have been saved.');
@@ -428,8 +514,12 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
         },
       });
     } catch (error) {
-      console.error('Error updating task:', error);
-      Alert.alert('Error', error instanceof Error ? error.message : 'Failed to update task');
+      logger.warn('Task update failed');
+      if (error instanceof ApiError && error.status === 401) {
+        handleUnauthorized();
+        return;
+      }
+      Alert.alert('Error', getUserFriendlyErrorMessage(error, 'Failed to update task'));
     } finally {
       setLoading(false);
     }
@@ -446,9 +536,19 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
 
       const updated = await updateTask(task.id, { status: newStatus, completedAt });
       setTask(updated as Task);
-      Alert.alert('Success', `Task marked as ${newStatus.toLowerCase()}`);
+      
+      if (newStatus === 'COMPLETED') {
+        navigation.navigate('Main', {
+          screen: 'Home',
+          params: {
+            completionEventId: `${task.id}:${Date.now()}`,
+          },
+        });
+      } else {
+        Alert.alert('Success', `Task marked as ${newStatus.toLowerCase()}`);
+      }
     } catch (error) {
-      console.error('Error toggling task status:', error);
+      logger.warn('Task status toggle failed');
       Alert.alert('Error', 'Failed to update task status');
     } finally {
       setLoading(false);
@@ -482,7 +582,7 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
                 },
               ]);
             } catch (error) {
-              console.error('Error deleting task:', error);
+              logger.warn('Task deletion failed');
               Alert.alert('Error', 'Failed to delete task');
             } finally {
               setLoading(false);
@@ -496,59 +596,62 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
   // Toggle subtask completion
   const toggleSubtask = async (subtaskId: string, currentStatus: Subtask['status']) => {
     try {
-      const token = await AsyncStorage.getItem('authToken');
-      
-      if (!token) {
-        Alert.alert('Error', 'No authentication token found');
-        return;
-      }
-
       const newStatus: Subtask['status'] = currentStatus === 'COMPLETED' ? 'TODO' : 'COMPLETED';
       const completedAt = newStatus === 'COMPLETED' ? new Date().toISOString() : undefined;
 
-      const response = await fetch(`${API_BASE_URL}/api/subtasks/${subtaskId}`, {
-        method: 'PATCH',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ status: newStatus, completedAt }),
-      });
+      const previousStatus = task?.status;
+      const updateResult = await updateSubtaskById(subtaskId, { status: newStatus, completedAt });
+      const nextTask = updateResult.task ? (updateResult.task as Task) : ((await getTaskById(task!.id)) as Task);
+      setTask(nextTask);
 
-      if (response.ok) {
-        const data = await response.json();
-        if (data?.task) {
-          setTask(data.task);
-          return;
-        }
-
-        // Fallback update if backend does not return updated parent task
-        setTask((prevTask) => {
-          if (!prevTask) return null;
-
-          const nextSubtasks = prevTask.subtasks?.map((st) =>
-            st.id === subtaskId ? { ...st, status: newStatus, completedAt } : st
-          );
-
-          const allCompleted = (nextSubtasks ?? []).length > 0
-            && (nextSubtasks ?? []).every((st) => st.status === 'COMPLETED');
-
-          return {
-            ...prevTask,
-            status: allCompleted ? 'COMPLETED' : 'TODO',
-            completedAt: allCompleted ? new Date().toISOString() : undefined,
-            subtasks: nextSubtasks,
-          };
+      if (nextTask.status === 'COMPLETED' && previousStatus !== 'COMPLETED') {
+        navigation.navigate('Main', {
+          screen: 'Home',
+          params: {
+            completionEventId: `${nextTask.id}:${Date.now()}`,
+          },
         });
-      } else {
-        const errorData = await response.json();
-        Alert.alert('Error', errorData.error || 'Failed to update subtask');
       }
     } catch (error) {
-      console.error('Error toggling subtask:', error);
-      Alert.alert('Error', 'Failed to update subtask');
+      logger.warn('Subtask toggle failed');
+      if (error instanceof ApiError && error.status === 401) {
+        handleUnauthorized();
+        return;
+      }
+      Alert.alert('Error', getUserFriendlyErrorMessage(error, 'Failed to update subtask'));
     }
   };
+
+  if (loadingTask && !task) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.errorContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={[styles.errorText, { color: colors.text, marginTop: 12 }]}>Loading task...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (screenError && !task) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.errorContainer}>
+          <MaterialIcons name="cloud-off" size={64} color="#D1D5DB" />
+          <Text style={styles.errorText}>{screenError}</Text>
+          <TouchableOpacity
+            style={styles.errorButton}
+            onPress={() => {
+              void refreshTask();
+            }}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.errorButtonText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (!task) {
     return (
@@ -570,18 +673,49 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
 
   return (
     <SafeAreaView style={styles.container}>
+      <LinearGradient
+        colors={backgroundGradient}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0, y: 1 }}
+        style={StyleSheet.absoluteFillObject}
+      />
+      <View
+        pointerEvents="none"
+        style={[
+          styles.backgroundBlob,
+          styles.backgroundBlobTop,
+          { backgroundColor: isDark ? 'rgba(0, 74, 173, 0.2)' : 'rgba(0, 74, 173, 0.1)' },
+        ]}
+      />
+      <View
+        pointerEvents="none"
+        style={[
+          styles.backgroundBlob,
+          styles.backgroundBlobBottom,
+          { backgroundColor: isDark ? 'rgba(77, 139, 230, 0.16)' : 'rgba(0, 74, 173, 0.08)' },
+        ]}
+      />
       {/* Header - Card-like with soft background, no harsh border */}
-      <View style={styles.headerContainer}>
+      <View
+        style={[
+          styles.headerContainer,
+          {
+            backgroundColor: elevatedSurface,
+            borderBottomColor: cardBorder,
+            shadowColor: isDark ? '#020617' : '#8EADE0',
+          },
+        ]}
+      >
         <TouchableOpacity
-          style={styles.headerButton}
+          style={[styles.headerButton, { backgroundColor: isDark ? 'rgba(21, 32, 51, 0.92)' : '#FFFFFF', borderColor: cardBorder }]}
           onPress={() => navigation.goBack()}
           activeOpacity={0.7}
         >
-          <MaterialIcons name="arrow-back" size={24} color="#1F2937" />
+          <MaterialIcons name="arrow-back" size={22} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Task Details</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Task Details</Text>
         <TouchableOpacity
-          style={styles.headerButton}
+          style={[styles.headerButton, { backgroundColor: isDark ? 'rgba(21, 32, 51, 0.92)' : '#FFFFFF', borderColor: cardBorder }]}
           onPress={() => {
             if (isEditing) {
               // Cancel editing - reset to original values
@@ -596,8 +730,8 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
         >
           <MaterialIcons 
             name={isEditing ? 'close' : 'edit'} 
-            size={24} 
-            color="#1F2937" 
+            size={22} 
+            color={colors.text} 
           />
         </TouchableOpacity>
       </View>
@@ -605,20 +739,31 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
       >
         {/* Task Title Section */}
-        <View style={styles.titleSection}>
+        <View style={[styles.titleSection, styles.surfaceCard, { backgroundColor: elevatedSurface, borderColor: cardBorder, shadowColor: isDark ? '#020617' : '#8EADE0' }]}>
           {isEditing ? (
             <TextInput
-              style={styles.titleInput}
+              style={[
+                styles.titleInput,
+                {
+                  color: colors.text,
+                  backgroundColor: isDark ? 'rgba(15, 25, 40, 0.86)' : 'rgba(248, 251, 255, 0.96)',
+                  borderColor: focusedField === 'title' ? `${colors.primary}88` : cardBorder,
+                },
+              ]}
               value={editTitle}
               onChangeText={setEditTitle}
               placeholder="Task title"
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor={colors.mutedText}
+              onFocus={() => setFocusedField('title')}
+              onBlur={() => setFocusedField(null)}
             />
           ) : (
-            <Text style={styles.taskTitle}>{task.title}</Text>
+            <Text style={[styles.taskTitle, { color: colors.text }]}>{task.title}</Text>
           )}
           
           {/* Priority Badge or Selector */}
@@ -626,15 +771,24 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
             <View style={styles.prioritySelector}>
               <Text style={styles.selectorLabel}>Priority</Text>
               <View style={styles.priorityButtons}>
-                {(['LOW', 'MEDIUM', 'HIGH'] as const).map((priority) => (
+                {(['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as const).map((priority) => (
                   <TouchableOpacity
                     key={priority}
                     style={[
                       styles.priorityButton,
+                      {
+                        borderColor: cardBorder,
+                        backgroundColor: isDark ? 'rgba(15, 25, 40, 0.86)' : 'rgba(248, 251, 255, 0.96)',
+                      },
                       editPriority === priority && {
                         backgroundColor: getPriorityBgColor(priority),
                         borderColor: getPriorityColor(priority),
-                        borderWidth: 1.5,
+                        borderWidth: 1.3,
+                        shadowColor: getPriorityColor(priority),
+                        shadowOpacity: 0.16,
+                        shadowRadius: 6,
+                        shadowOffset: { width: 0, height: 3 },
+                        elevation: 2,
                       },
                     ]}
                     onPress={() => setEditPriority(priority)}
@@ -643,6 +797,7 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
                     <Text
                       style={[
                         styles.priorityButtonText,
+                        { color: colors.mutedText },
                         editPriority === priority && {
                           color: getPriorityColor(priority),
                           fontWeight: '700',
@@ -660,7 +815,10 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
               <View
                 style={[
                   styles.priorityBadge,
-                  { backgroundColor: getPriorityBgColor(task.priority) },
+                  {
+                    backgroundColor: getPriorityBgColor(task.priority),
+                    borderColor: `${getPriorityColor(task.priority)}44`,
+                  },
                 ]}
               >
                 <View
@@ -687,6 +845,7 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
           <View
             style={[
               styles.statusBadge,
+              { borderColor: task.status === 'COMPLETED' ? `${colors.success}46` : `${colors.primary}46` },
               task.status === 'COMPLETED'
                 ? styles.statusCompleted
                 : styles.statusActive,
@@ -695,7 +854,7 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
             <MaterialIcons
               name={task.status === 'COMPLETED' ? 'check-circle' : 'radio-button-unchecked'}
               size={18}
-              color={task.status === 'COMPLETED' ? '#00C853' : '#2563EB'}
+              color={task.status === 'COMPLETED' ? '#00C853' : '#004AAD'}
             />
             <Text
               style={[
@@ -712,21 +871,30 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
 
         {/* Description Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Description</Text>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Description</Text>
           {isEditing ? (
             <TextInput
-              style={styles.descriptionInput}
+              style={[
+                styles.descriptionInput,
+                {
+                  color: colors.text,
+                  backgroundColor: isDark ? 'rgba(15, 25, 40, 0.86)' : 'rgba(248, 251, 255, 0.96)',
+                  borderColor: focusedField === 'description' ? `${colors.primary}88` : cardBorder,
+                },
+              ]}
               value={editDescription}
               onChangeText={setEditDescription}
               placeholder="Add a description..."
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor={colors.mutedText}
               multiline
               numberOfLines={4}
               textAlignVertical="top"
+              onFocus={() => setFocusedField('description')}
+              onBlur={() => setFocusedField(null)}
             />
           ) : (
-            <View style={styles.sectionCard}>
-              <Text style={styles.descriptionText}>
+            <View style={[styles.sectionCard, styles.surfaceCard, { backgroundColor: elevatedSurface, borderColor: cardBorder, shadowColor: isDark ? '#020617' : '#8EADE0' }]}>
+              <Text style={[styles.descriptionText, { color: colors.text }]}>
                 {task.description || 'No description provided'}
               </Text>
             </View>
@@ -735,32 +903,39 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
 
         {/* Due Date Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Due Date</Text>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Due Date</Text>
           {isEditing ? (
             <TouchableOpacity
-              style={styles.infoCard}
+              style={[
+                styles.infoCard,
+                {
+                  backgroundColor: getDueTone().cardBg,
+                  borderColor: getDueTone().border,
+                  shadowColor: isDark ? '#020617' : '#8EADE0',
+                },
+              ]}
               onPress={openDatePicker}
               activeOpacity={0.8}
               disabled={savingDueAt}
             >
-              <View style={styles.iconContainer}>
-                <MaterialIcons name="event" size={22} color="#2563EB" />
+              <View style={[styles.iconContainer, { backgroundColor: getDueTone().iconBg }] }>
+                <MaterialIcons name="event" size={20} color={getDueTone().iconColor} />
               </View>
               <View style={styles.infoContent}>
-                <Text style={styles.infoMainText}>{localDueAtIso ? formatRelativeDate(localDueAtIso) : 'No due date'}</Text>
-                <Text style={styles.infoSubText}>{formatDate(localDueAtIso || undefined)}</Text>
+                <Text style={[styles.infoMainText, { color: colors.text }]}>{localDueAtIso ? formatRelativeDate(localDueAtIso) : 'No due date'}</Text>
+                <Text style={[styles.infoSubText, { color: colors.mutedText }]}>{formatDate(localDueAtIso || undefined)}</Text>
               </View>
               <View style={styles.dueRightActions}>
                 {localDueAtIso ? (
                   <TouchableOpacity
-                    style={styles.clearDueButton}
+                    style={[styles.clearDueButton, { backgroundColor: isDark ? 'rgba(15, 25, 40, 0.9)' : '#EFF5FF' }]}
                     onPress={(event) => {
                       event.stopPropagation();
                       clearDueAt();
                     }}
                     disabled={savingDueAt}
                   >
-                    <MaterialIcons name="close" size={16} color="#6B7280" />
+                      <MaterialIcons name="close" size={15} color={colors.mutedText} />
                   </TouchableOpacity>
                 ) : null}
                 {savingDueAt ? (
@@ -769,13 +944,22 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
               </View>
             </TouchableOpacity>
           ) : (
-            <View style={styles.infoCard}>
-              <View style={styles.iconContainer}>
-                <MaterialIcons name="event" size={22} color="#2563EB" />
+            <View
+              style={[
+                styles.infoCard,
+                {
+                  backgroundColor: getDueTone().cardBg,
+                  borderColor: getDueTone().border,
+                  shadowColor: isDark ? '#020617' : '#8EADE0',
+                },
+              ]}
+            >
+              <View style={[styles.iconContainer, { backgroundColor: getDueTone().iconBg }] }>
+                <MaterialIcons name="event" size={20} color={getDueTone().iconColor} />
               </View>
               <View style={styles.infoContent}>
-                <Text style={styles.infoMainText}>{localDueAtIso ? formatRelativeDate(localDueAtIso) : 'No due date'}</Text>
-                <Text style={styles.infoSubText}>{formatDate(localDueAtIso || undefined)}</Text>
+                <Text style={[styles.infoMainText, { color: colors.text }]}>{localDueAtIso ? formatRelativeDate(localDueAtIso) : 'No due date'}</Text>
+                <Text style={[styles.infoSubText, { color: colors.mutedText }]}>{formatDate(localDueAtIso || undefined)}</Text>
               </View>
             </View>
           )}
@@ -785,9 +969,9 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
         {(isEditing || (!isEditing && task.subtasks && task.subtasks.length > 0)) && (
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Subtasks</Text>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Subtasks</Text>
               {!isEditing && (
-                <Text style={styles.subtaskCount}>
+                <Text style={[styles.subtaskCount, { color: colors.mutedText }]}> 
                   {task.subtasks?.filter((st) => st.status === 'COMPLETED').length}/{task.subtasks?.length} completed
                 </Text>
               )}
@@ -796,50 +980,93 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
             {isEditing ? (
               <>
                 {editSubtasks.filter(st => !st.isDeleted).map((subtask, index) => (
-                  <View key={subtask.id} style={styles.editSubtaskCard}>
+                  <View
+                    key={subtask.id}
+                    style={[
+                      styles.editSubtaskCard,
+                      {
+                        backgroundColor: elevatedSurface,
+                        borderColor: cardBorder,
+                        shadowColor: isDark ? '#020617' : '#8EADE0',
+                      },
+                    ]}
+                  >
                     <View style={styles.editSubtaskInputs}>
                       <TextInput
-                        style={styles.subtaskTitleInput}
+                        style={[
+                          styles.subtaskTitleInput,
+                          {
+                            color: colors.text,
+                            borderColor: focusedField === `subtask-title-${index}` ? `${colors.primary}88` : cardBorder,
+                            backgroundColor: isDark ? 'rgba(15, 25, 40, 0.86)' : 'rgba(248, 251, 255, 0.96)',
+                          },
+                        ]}
                         value={subtask.title}
                         onChangeText={(text) => updateEditSubtask(index, 'title', text)}
                         placeholder="Subtask title"
-                        placeholderTextColor="#9CA3AF"
+                        placeholderTextColor={colors.mutedText}
+                        onFocus={() => setFocusedField(`subtask-title-${index}`)}
+                        onBlur={() => setFocusedField(null)}
                       />
                       <TextInput
-                        style={styles.subtaskDescriptionInput}
+                        style={[
+                          styles.subtaskDescriptionInput,
+                          {
+                            color: colors.text,
+                            borderColor: focusedField === `subtask-desc-${index}` ? `${colors.primary}88` : cardBorder,
+                            backgroundColor: isDark ? 'rgba(15, 25, 40, 0.86)' : 'rgba(248, 251, 255, 0.96)',
+                          },
+                        ]}
                         value={subtask.description || ''}
                         onChangeText={(text) => updateEditSubtask(index, 'description', text)}
                         placeholder="Subtask description (optional)"
-                        placeholderTextColor="#9CA3AF"
+                        placeholderTextColor={colors.mutedText}
                         multiline
+                        onFocus={() => setFocusedField(`subtask-desc-${index}`)}
+                        onBlur={() => setFocusedField(null)}
                       />
                     </View>
                     <TouchableOpacity
-                      style={styles.deleteSubtaskButton}
+                      style={[styles.deleteSubtaskButton, { backgroundColor: isDark ? 'rgba(153, 27, 27, 0.22)' : 'rgba(255, 77, 77, 0.12)' }]}
                       onPress={() => markSubtaskForDeletion(index)}
                       activeOpacity={0.7}
                     >
-                      <MaterialIcons name="delete-outline" size={22} color="#FF4D4D" />
+                      <MaterialIcons name="delete-outline" size={20} color={colors.danger} />
                     </TouchableOpacity>
                   </View>
                 ))}
                 
                 <TouchableOpacity
-                  style={styles.addSubtaskButton}
+                  style={[styles.addSubtaskButton, { backgroundColor: elevatedSurface, borderColor: `${colors.primary}80` }]}
                   onPress={addNewSubtask}
                   activeOpacity={0.7}
                 >
-                  <MaterialIcons name="add-circle-outline" size={20} color="#2563EB" />
-                  <Text style={styles.addSubtaskText}>Add Subtask</Text>
+                  <MaterialIcons name="add-circle-outline" size={20} color={colors.primary} />
+                  <Text style={[styles.addSubtaskText, { color: colors.primary }]}>Add Subtask</Text>
                 </TouchableOpacity>
               </>
             ) : (
               task.subtasks?.map((subtask) => (
                 <TouchableOpacity
                   key={subtask.id}
-                  style={styles.subtaskCard}
+                  style={[
+                    styles.subtaskCard,
+                    {
+                      backgroundColor:
+                        subtask.status === 'COMPLETED'
+                          ? isDark
+                            ? 'rgba(34, 197, 94, 0.14)'
+                            : 'rgba(34, 197, 94, 0.1)'
+                          : elevatedSurface,
+                      borderColor:
+                        subtask.status === 'COMPLETED'
+                          ? `${colors.success}44`
+                          : cardBorder,
+                      shadowColor: isDark ? '#020617' : '#8EADE0',
+                    },
+                  ]}
                   onPress={() => toggleSubtask(subtask.id, subtask.status)}
-                  activeOpacity={0.7}
+                  activeOpacity={0.83}
                 >
                   <View style={styles.subtaskCheckbox}>
                     <MaterialIcons
@@ -852,13 +1079,14 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
                     <Text
                       style={[
                         styles.subtaskTitle,
+                        { color: colors.text },
                         subtask.status === 'COMPLETED' && styles.subtaskTitleCompleted,
                       ]}
                     >
                       {subtask.title}
                     </Text>
                     {subtask.description && (
-                      <Text style={styles.subtaskDescription}>{subtask.description}</Text>
+                      <Text style={[styles.subtaskDescription, { color: colors.mutedText }]}>{subtask.description}</Text>
                     )}
                   </View>
                 </TouchableOpacity>
@@ -870,12 +1098,12 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
         {/* Task Metadata Section */}
         {!isEditing && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Task Information</Text>
-            <View style={styles.metadataCard}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Task Information</Text>
+            <View style={[styles.metadataCard, styles.surfaceCard, { backgroundColor: elevatedSurface, borderColor: cardBorder, shadowColor: isDark ? '#020617' : '#8EADE0' }]}>
               <View style={styles.metadataItem}>
-                <MaterialIcons name="schedule" size={18} color="#6B7280" />
-                <Text style={styles.metadataLabel}>Created</Text>
-                <Text style={styles.metadataValue}>
+                <MaterialIcons name="schedule" size={18} color={colors.mutedText} />
+                <Text style={[styles.metadataLabel, { color: colors.mutedText }]}>Created</Text>
+                <Text style={[styles.metadataValue, { color: colors.text }]}>
                   {new Date(task.createdAt).toLocaleDateString('en-US', {
                     month: 'short',
                     day: 'numeric',
@@ -883,11 +1111,11 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
                   })}
                 </Text>
               </View>
-              <View style={styles.metadataDivider} />
+              <View style={[styles.metadataDivider, { backgroundColor: cardBorder }]} />
               <View style={styles.metadataItem}>
-                <MaterialIcons name="update" size={18} color="#6B7280" />
-                <Text style={styles.metadataLabel}>Last Updated</Text>
-                <Text style={styles.metadataValue}>
+                <MaterialIcons name="update" size={18} color={colors.mutedText} />
+                <Text style={[styles.metadataLabel, { color: colors.mutedText }]}>Last Updated</Text>
+                <Text style={[styles.metadataValue, { color: colors.text }]}>
                   {new Date(task.updatedAt).toLocaleDateString('en-US', {
                     month: 'short',
                     day: 'numeric',
@@ -902,68 +1130,96 @@ export default function TaskDetailsScreen({ route, navigation }: any) {
         {/* Action Buttons Section */}
         <View style={styles.actionsSection}>
           {isEditing ? (
-            <TouchableOpacity
-              style={[styles.actionButton, styles.actionButtonPrimary]}
-              onPress={saveChanges}
-              disabled={loading}
-              activeOpacity={0.7}
-            >
-              {loading ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <>
-                  <MaterialIcons name="save" size={20} color="#FFFFFF" />
-                  <Text style={styles.actionButtonText}>Save Changes</Text>
-                </>
-              )}
-            </TouchableOpacity>
+            <Animated.View style={{ transform: [{ scale: primaryActionScale }] }}>
+              <TouchableOpacity
+                style={[styles.actionButton, styles.actionButtonPrimary]}
+                onPress={saveChanges}
+                disabled={loading}
+                activeOpacity={0.82}
+                onPressIn={() => animateActionScale(primaryActionScale, 0.975)}
+                onPressOut={() => animateActionScale(primaryActionScale, 1)}
+              >
+                <LinearGradient
+                  colors={['#0A5DCD', '#004AAD']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.actionGradient}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <MaterialIcons name="save" size={20} color="#FFFFFF" />
+                      <Text style={styles.actionButtonText}>Save Changes</Text>
+                    </>
+                  )}
+                </LinearGradient>
+              </TouchableOpacity>
+            </Animated.View>
           ) : (
             <>
-              <TouchableOpacity
-                style={[
-                  styles.actionButton,
-                  task.status === 'COMPLETED' ? styles.actionButtonSecondary : styles.actionButtonPrimary,
-                ]}
-                onPress={toggleTaskStatus}
-                disabled={loading}
-                activeOpacity={0.7}
-              >
-                {loading ? (
-                  <ActivityIndicator color={task.status === 'COMPLETED' ? '#1F2937' : '#FFFFFF'} />
-                ) : (
-                  <>
-                    <MaterialIcons
-                      name={task.status === 'COMPLETED' ? 'undo' : 'check-circle'}
-                      size={20}
-                      color={task.status === 'COMPLETED' ? '#1F2937' : '#FFFFFF'}
+              <Animated.View style={{ transform: [{ scale: secondaryActionScale }] }}>
+                <TouchableOpacity
+                  style={[
+                    styles.actionButton,
+                    task.status === 'COMPLETED' ? styles.actionButtonSecondary : styles.actionButtonPrimary,
+                    task.status === 'COMPLETED' && { borderColor: cardBorder, backgroundColor: elevatedSurface },
+                  ]}
+                  onPress={toggleTaskStatus}
+                  disabled={loading}
+                  activeOpacity={0.82}
+                  onPressIn={() => animateActionScale(secondaryActionScale, 0.975)}
+                  onPressOut={() => animateActionScale(secondaryActionScale, 1)}
+                >
+                  {task.status === 'COMPLETED' ? null : (
+                    <LinearGradient
+                      colors={['#0A5DCD', '#004AAD']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.actionGradient}
                     />
-                    <Text
-                      style={[
-                        styles.actionButtonText,
-                        task.status === 'COMPLETED' && styles.actionButtonTextSecondary,
-                      ]}
-                    >
-                      {task.status === 'COMPLETED' ? 'Mark as Active' : 'Mark as Completed'}
-                    </Text>
-                  </>
-                )}
-              </TouchableOpacity>
+                  )}
+                  {loading ? (
+                    <ActivityIndicator color={task.status === 'COMPLETED' ? colors.text : '#FFFFFF'} />
+                  ) : (
+                    <>
+                      <MaterialIcons
+                        name={task.status === 'COMPLETED' ? 'undo' : 'check-circle'}
+                        size={20}
+                        color={task.status === 'COMPLETED' ? colors.text : '#FFFFFF'}
+                      />
+                      <Text
+                        style={[
+                          styles.actionButtonText,
+                          task.status === 'COMPLETED' && { color: colors.text },
+                        ]}
+                      >
+                        {task.status === 'COMPLETED' ? 'Mark as Active' : 'Mark as Completed'}
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </Animated.View>
 
-              <TouchableOpacity
-                style={[styles.actionButton, styles.actionButtonDelete]}
-                onPress={deleteTask}
-                disabled={loading}
-                activeOpacity={0.7}
-              >
-                {loading ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <>
-                    <MaterialIcons name="delete" size={20} color="#FFFFFF" />
-                    <Text style={styles.actionButtonText}>Delete Task</Text>
-                  </>
-                )}
-              </TouchableOpacity>
+              <Animated.View style={{ transform: [{ scale: deleteActionScale }] }}>
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.actionButtonDelete]}
+                  onPress={deleteTask}
+                  disabled={loading}
+                  activeOpacity={0.82}
+                  onPressIn={() => animateActionScale(deleteActionScale, 0.975)}
+                  onPressOut={() => animateActionScale(deleteActionScale, 1)}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <MaterialIcons name="delete" size={20} color="#FFFFFF" />
+                      <Text style={styles.actionButtonText}>Delete Task</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </Animated.View>
             </>
           )}
         </View>
@@ -1038,7 +1294,24 @@ const styles = StyleSheet.create({
   // Container
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F8FAFF',
+  },
+  backgroundBlob: {
+    position: 'absolute',
+    borderRadius: 999,
+    opacity: 1,
+  },
+  backgroundBlobTop: {
+    width: 220,
+    height: 220,
+    top: 70,
+    right: -74,
+  },
+  backgroundBlobBottom: {
+    width: 170,
+    height: 170,
+    bottom: 120,
+    left: -56,
   },
 
   // Error State
@@ -1056,7 +1329,7 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   errorButton: {
-    backgroundColor: '#2563EB',
+    backgroundColor: '#004AAD',
     paddingHorizontal: 32,
     paddingVertical: 14,
     borderRadius: 12,
@@ -1073,31 +1346,29 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: '#F9FAFB',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
     elevation: 2,
   },
   headerButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#FFFFFF',
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    borderWidth: 1,
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
     elevation: 1,
   },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
-    color: '#111827',
   },
 
   // Scroll View
@@ -1106,56 +1377,61 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: 20,
-    paddingTop: 20,
+    paddingTop: 14,
+  },
+  surfaceCard: {
+    borderWidth: 1,
+    borderRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    elevation: 3,
   },
 
   // Title Section
   titleSection: {
-    marginBottom: 20,
+    marginBottom: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 15,
   },
   taskTitle: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: '700',
-    color: '#111827',
-    marginBottom: 12,
-    lineHeight: 36,
+    marginBottom: 10,
+    lineHeight: 30,
   },
   titleInput: {
-    fontSize: 28,
+    fontSize: 22,
     fontWeight: '700',
-    color: '#111827',
-    marginBottom: 16,
+    marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 12,
-    padding: 16,
-    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
   },
 
   // Priority Selector (Edit Mode)
   prioritySelector: {
-    marginTop: 8,
+    marginTop: 6,
   },
   selectorLabel: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '600',
-    color: '#6B7280',
-    marginBottom: 10,
+    marginBottom: 8,
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 0.7,
   },
   priorityButtons: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 8,
+    flexWrap: 'wrap',
   },
   priorityButton: {
-    flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 10,
+    minWidth: '22%',
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
     alignItems: 'center',
   },
   priorityButtonText: {
@@ -1169,9 +1445,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-start',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    borderWidth: 1,
   },
   priorityDot: {
     width: 8,
@@ -1189,13 +1466,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-start',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    marginBottom: 24,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    marginBottom: 14,
+    borderWidth: 1,
   },
   statusActive: {
-    backgroundColor: 'rgba(37, 99, 235, 0.1)',
+    backgroundColor: 'rgba(0, 74, 173, 0.12)',
   },
   statusCompleted: {
     backgroundColor: 'rgba(0, 200, 83, 0.1)',
@@ -1206,7 +1484,7 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   statusTextActive: {
-    color: '#2563EB',
+    color: '#004AAD',
   },
   statusTextCompleted: {
     color: '#00C853',
@@ -1214,7 +1492,7 @@ const styles = StyleSheet.create({
 
   // Sections
   section: {
-    marginBottom: 24,
+    marginBottom: 14,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -1225,8 +1503,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#111827',
-    marginBottom: 12,
+    marginBottom: 9,
   },
   subtaskCount: {
     fontSize: 13,
@@ -1236,11 +1513,9 @@ const styles = StyleSheet.create({
 
   // Section Cards (Description, Info, Metadata)
   sectionCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
   },
   descriptionText: {
     fontSize: 15,
@@ -1249,31 +1524,29 @@ const styles = StyleSheet.create({
   },
   descriptionInput: {
     fontSize: 15,
-    color: '#1F2937',
     lineHeight: 24,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 16,
-    minHeight: 120,
-    backgroundColor: '#FFFFFF',
+    minHeight: 112,
   },
 
   // Info Card (Due Date)
   infoCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
+    borderRadius: 16,
+    padding: 14,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 2,
   },
   iconContainer: {
     width: 44,
     height: 44,
-    borderRadius: 10,
-    backgroundColor: '#EFF6FF',
+    borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 14,
@@ -1292,7 +1565,6 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: '#F3F4F6',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1311,12 +1583,14 @@ const styles = StyleSheet.create({
   subtaskCard: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: 15,
     padding: 14,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 2,
   },
   subtaskCheckbox: {
     marginRight: 14,
@@ -1346,12 +1620,14 @@ const styles = StyleSheet.create({
   editSubtaskCard: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: 15,
     padding: 14,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 2,
   },
   editSubtaskInputs: {
     flex: 1,
@@ -1360,30 +1636,23 @@ const styles = StyleSheet.create({
   subtaskTitleInput: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#111827',
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 8,
+    borderRadius: 10,
     padding: 10,
     marginBottom: 8,
-    backgroundColor: '#F9FAFB',
   },
   subtaskDescriptionInput: {
     fontSize: 14,
-    color: '#6B7280',
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 8,
+    borderRadius: 10,
     padding: 10,
     minHeight: 60,
-    backgroundColor: '#F9FAFB',
     textAlignVertical: 'top',
   },
   deleteSubtaskButton: {
     width: 36,
     height: 36,
     borderRadius: 8,
-    backgroundColor: 'rgba(255, 77, 77, 0.1)',
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 4,
@@ -1392,28 +1661,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 14,
-    borderWidth: 1.5,
-    borderColor: '#2563EB',
+    borderWidth: 1.2,
+    borderColor: '#004AAD',
     borderStyle: 'dashed',
     marginTop: 4,
   },
   addSubtaskText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#2563EB',
+    color: '#004AAD',
     marginLeft: 8,
   },
 
   // Metadata Card
   metadataCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
   },
   metadataItem: {
     flexDirection: 'row',
@@ -1439,24 +1705,26 @@ const styles = StyleSheet.create({
 
   // Action Buttons
   actionsSection: {
-    marginTop: 8,
+    marginTop: 6,
   },
   actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    borderRadius: 12,
+    minHeight: 56,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 16,
     marginBottom: 12,
+    overflow: 'hidden',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    elevation: 3,
   },
   actionButtonPrimary: {
-    backgroundColor: '#2563EB',
+    backgroundColor: '#004AAD',
   },
   actionButtonSecondary: {
     backgroundColor: '#FFFFFF',
@@ -1465,6 +1733,12 @@ const styles = StyleSheet.create({
   },
   actionButtonDelete: {
     backgroundColor: '#FF4D4D',
+  },
+  actionGradient: {
+    ...StyleSheet.absoluteFillObject,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   actionButtonText: {
     fontSize: 16,

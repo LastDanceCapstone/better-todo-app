@@ -18,6 +18,10 @@ export default function NotificationBell({ count = 0 }: Props) {
   const { colors } = useTheme();
   const previousCount = useRef(count);
   const scale = useSharedValue(1);
+  const iconColor = count > 0 ? colors.primary : colors.text;
+  const displayCount = count > 99 ? '99+' : `${Math.max(0, count)}`;
+  const isSingleDigit = count > 0 && count < 10;
+  const isLargeDisplay = displayCount.length >= 3;
 
   const animatedBadgeStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
@@ -36,10 +40,21 @@ export default function NotificationBell({ count = 0 }: Props) {
 
   return (
     <View style={styles.wrapper}>
-      <Ionicons name="notifications-outline" size={26} color={colors.text} />
+      <Ionicons name={count > 0 ? 'notifications' : 'notifications-outline'} size={24} color={iconColor} />
       {count > 0 && (
-        <Animated.View style={[styles.badge, animatedBadgeStyle, { backgroundColor: colors.danger }]}> 
-          <Text style={styles.badgeText}>{count > 9 ? "9+" : count}</Text>
+        <Animated.View
+          style={[
+            styles.badge,
+            isSingleDigit
+              ? styles.badgeSingleDigit
+              : isLargeDisplay
+                ? styles.badgeLarge
+                : styles.badgeDoubleDigit,
+            animatedBadgeStyle,
+            { backgroundColor: colors.danger, borderColor: colors.surface },
+          ]}
+        >
+          <Text style={[styles.badgeText, isLargeDisplay ? styles.badgeTextLarge : styles.badgeTextNormal]}>{displayCount}</Text>
         </Animated.View>
       )}
     </View>
@@ -49,22 +64,53 @@ export default function NotificationBell({ count = 0 }: Props) {
 const styles = StyleSheet.create({
   wrapper: {
     position: "relative",
-    padding: 6,
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   badge: {
     position: "absolute",
-    right: 0,
-    top: 0,
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
+    right: -7,
+    top: -5,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 4,
+    paddingHorizontal: 0,
+    borderWidth: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  badgeSingleDigit: {
+    minWidth: 20,
+    paddingHorizontal: 0,
+  },
+  badgeDoubleDigit: {
+    minWidth: 24,
+    paddingHorizontal: 5,
+  },
+  badgeLarge: {
+    minWidth: 29,
+    paddingHorizontal: 6,
   },
   badgeText: {
     color: "white",
-    fontSize: 10,
     fontWeight: "800",
+    textAlign: 'center',
+    includeFontPadding: false,
+  },
+  badgeTextNormal: {
+    fontSize: 10,
+    lineHeight: 12,
+  },
+  badgeTextLarge: {
+    fontSize: 9,
+    lineHeight: 11,
+    letterSpacing: 0.2,
   },
 });

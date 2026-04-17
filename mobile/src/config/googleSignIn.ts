@@ -6,6 +6,24 @@ import {
 } from '@react-native-google-signin/google-signin';
 
 let isConfigured = false;
+const TECHNICAL_GOOGLE_MESSAGE_PATTERN = /(https?:\/\/|www\.|localhost|\b(?:\d{1,3}\.){3}\d{1,3}\b|network request failed|failed to fetch|xmlhttprequest|socket|stack|exception|timeout|typeerror|http\s*\d{3})/i;
+
+const sanitizeGoogleMessage = (message?: string): string | null => {
+	if (typeof message !== 'string') {
+		return null;
+	}
+
+	const trimmed = message.trim();
+	if (!trimmed) {
+		return null;
+	}
+
+	if (TECHNICAL_GOOGLE_MESSAGE_PATTERN.test(trimmed)) {
+		return null;
+	}
+
+	return trimmed;
+};
 
 function ensureGoogleClientIds() {
 	// Set these in mobile/.env and EAS env vars for dev/prod builds.
@@ -19,6 +37,18 @@ function ensureGoogleClientIds() {
 	}
 
 	return { webClientId, iosClientId };
+}
+
+export function getGoogleSignInConfigurationIssue(): string | null {
+	try {
+		ensureGoogleClientIds();
+		return null;
+	} catch (error) {
+		if (error instanceof Error && error.message.trim().length > 0) {
+			return 'Google Sign-In is currently unavailable. Please try again later.';
+		}
+		return 'Google Sign-In is not configured.';
+	}
 }
 
 export function configureGoogleSignIn(): void {
@@ -83,13 +113,17 @@ export function getGoogleErrorMessage(error: unknown): string {
 			return 'Google services are unavailable on this device right now.';
 		}
 
-		if (typeof error.message === 'string' && error.message.trim().length > 0) {
-			return error.message;
+		const safeMessage = sanitizeGoogleMessage(error.message);
+		if (safeMessage) {
+			return safeMessage;
 		}
 	}
 
-	if (error instanceof Error && error.message.trim().length > 0) {
-		return error.message;
+	if (error instanceof Error) {
+		const safeMessage = sanitizeGoogleMessage(error.message);
+		if (safeMessage) {
+			return safeMessage;
+		}
 	}
 
 	return 'Unable to continue with Google. Please try again.';

@@ -18,17 +18,19 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Calendar from 'expo-calendar';
 import { useFocusEffect } from '@react-navigation/native';
 import { useTheme, useThemePreference } from '../theme';
-
-const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
+import {
+  ApiError,
+  getUserFriendlyErrorMessage,
+  getUserProfile,
+  type UserProfile,
+  updateUserAvatar,
+  uploadUserAvatarImage,
+} from '../config/api';
+import { disconnectCurrentPushInstallation } from '../services/pushNotifications';
+import { clearLocalAuthSession } from '../utils/session';
+import { logger } from '../utils/logger';
 const APP_CALENDAR_STORAGE_KEY = 'prioritizeCalendarAppId';
-
-interface UserProfile {
-  id: string;
-  firstName: string;
-  lastName: string;
-  email: string;
-  createdAt: string;
-}
+const USER_AVATAR_CACHE_KEY = 'userAvatar';
 
 interface SettingRow {
   id: string;
@@ -38,17 +40,24 @@ interface SettingRow {
   onPress: () => void;
 }
 
-export default function AccountDetailsScreen({ navigation }: any) {
+type AccountDetailsScreenProps = {
+  navigation: any;
+  onLogout?: () => void;
+};
+
+export default function AccountDetailsScreen({ navigation, onLogout }: AccountDetailsScreenProps) {
   const { colors } = useTheme();
   const { themePreference, setThemePreference } = useThemePreference();
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
+  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
+  const [avatarUpdating, setAvatarUpdating] = useState(false);
   const [calendarSyncOn, setCalendarSyncOn] = useState(false);
+  const sanitizedAvatarUri = avatarUri?.trim() || null;
 
   useEffect(() => {
     fetchUserProfile();
-    loadAvatar();
     requestPermissions();
   }, []);
 
@@ -80,24 +89,18 @@ export default function AccountDetailsScreen({ navigation }: any) {
     }, [])
   );
 
-  const loadAvatar = async () => {
+  const cacheAvatar = async (uri: string | null) => {
     try {
-      const savedAvatar = await AsyncStorage.getItem('userAvatar');
-      if (savedAvatar) {
-        setAvatarUri(savedAvatar);
+      const normalizedUri = uri?.trim() || null;
+      if (normalizedUri) {
+        await AsyncStorage.setItem(USER_AVATAR_CACHE_KEY, normalizedUri);
+      } else {
+        await AsyncStorage.removeItem(USER_AVATAR_CACHE_KEY);
       }
+      setAvatarUri(normalizedUri);
+      setAvatarLoadFailed(false);
     } catch (error) {
-      console.error('Error loading avatar:', error);
-    }
-  };
-
-  const saveAvatar = async (uri: string) => {
-    try {
-      await AsyncStorage.setItem('userAvatar', uri);
-      setAvatarUri(uri);
-    } catch (error) {
-      console.error('Error saving avatar:', error);
-      Alert.alert('Error', 'Failed to save avatar');
+      logger.warn('Failed to cache avatar');
     }
   };
 
@@ -107,51 +110,48 @@ export default function AccountDetailsScreen({ navigation }: any) {
     const { status: libraryStatus } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     
     if (cameraStatus !== 'granted' || libraryStatus !== 'granted') {
-      console.log('Permissions not fully granted, but will handle on action');
+      logger.warn('Camera or library permissions not fully granted');
     }
   };
 
   const fetchUserProfile = async () => {
     try {
       setLoading(true);
-      const token = await AsyncStorage.getItem('authToken');
-
-      if (!token) {
-        Alert.alert('Error', 'No authentication token found.');
-        navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+      // Show cached avatar immediately while the network request is in flight
+      const cachedAvatar = await AsyncStorage.getItem(USER_AVATAR_CACHE_KEY);
+      if (cachedAvatar) {
+        setAvatarUri(cachedAvatar.trim());
+        setAvatarLoadFailed(false);
+      }
+      const profile = await getUserProfile();
+      setUser(profile);
+      await cacheAvatar(profile.avatarUrl ?? null);
+      try {
+        const storedUser = await AsyncStorage.getItem('user');
+        if (storedUser) {
+          const parsed = JSON.parse(storedUser);
+          await AsyncStorage.setItem('user', JSON.stringify({ ...parsed, avatarUrl: profile.avatarUrl ?? null }));
+        }
+      } catch {}
+    } catch (error: any) {
+      if (error instanceof ApiError && error.status === 401) {
+        Alert.alert('Session Expired', 'Please log in again.');
+        handleLogout();
         return;
       }
 
-      const response = await fetch(`${API_BASE_URL}/api/user/profile`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        // Backend returns { user: {...} }, so extract the user object
-        setUser(data.user);
-      } else {
-        if (response.status === 401) {
-          Alert.alert('Session Expired', 'Please log in again.');
-          handleLogout();
-        } else {
-          const errorData = await response.json();
-          Alert.alert('Error', errorData.error || 'Failed to load profile');
-        }
-      }
-    } catch (error) {
-      console.error('Error fetching user profile:', error);
-      Alert.alert('Error', 'Failed to load profile. Please check your connection.');
+      logger.warn('Failed to fetch user profile');
+      Alert.alert('Error', getUserFriendlyErrorMessage(error, 'Failed to load profile. Please try again.'));
     } finally {
       setLoading(false);
     }
   };
 
   const handleAvatarPress = () => {
+    if (avatarUpdating) {
+      return;
+    }
+
     if (Platform.OS === 'ios') {
       // iOS Action Sheet
       ActionSheetIOS.showActionSheetWithOptions(
@@ -187,11 +187,51 @@ export default function AccountDetailsScreen({ navigation }: any) {
 
   const removeAvatar = async () => {
     try {
-      await AsyncStorage.removeItem('userAvatar');
-      setAvatarUri(null);
-    } catch (error) {
-      console.error('Error removing avatar:', error);
-      Alert.alert('Error', 'Failed to remove avatar');
+      setAvatarUpdating(true);
+      const updatedUser = await updateUserAvatar(null);
+      setUser(updatedUser);
+      await cacheAvatar(null);
+      try {
+        const storedUser = await AsyncStorage.getItem('user');
+        if (storedUser) {
+          const parsed = JSON.parse(storedUser);
+          await AsyncStorage.setItem('user', JSON.stringify({ ...parsed, avatarUrl: null }));
+        }
+      } catch {}
+    } catch (error: any) {
+      logger.warn('Failed to remove avatar');
+      Alert.alert('Error', getUserFriendlyErrorMessage(error, 'Failed to remove avatar. Please try again.'));
+    } finally {
+      setAvatarUpdating(false);
+    }
+  };
+
+  const uploadAvatarAsset = async (asset: ImagePicker.ImagePickerAsset) => {
+    const previousUri = avatarUri;
+    try {
+      setAvatarUpdating(true);
+      setAvatarUri(asset.uri);
+      setAvatarLoadFailed(false);
+      const updatedUser = await uploadUserAvatarImage({
+        uri: asset.uri,
+        fileName: asset.fileName,
+        mimeType: asset.mimeType,
+      });
+      setUser(updatedUser);
+      await cacheAvatar(updatedUser.avatarUrl ?? null);
+      try {
+        const storedUser = await AsyncStorage.getItem('user');
+        if (storedUser) {
+          const parsed = JSON.parse(storedUser);
+          await AsyncStorage.setItem('user', JSON.stringify({ ...parsed, avatarUrl: updatedUser.avatarUrl ?? null }));
+        }
+      } catch {}
+    } catch (error: any) {
+      logger.warn('Failed to upload avatar');
+      setAvatarUri(previousUri);
+      Alert.alert('Error', getUserFriendlyErrorMessage(error, 'Failed to upload avatar. Please try again.'));
+    } finally {
+      setAvatarUpdating(false);
     }
   };
 
@@ -212,10 +252,10 @@ export default function AccountDetailsScreen({ navigation }: any) {
       });
 
       if (!result.canceled && result.assets[0]) {
-        await saveAvatar(result.assets[0].uri);
+        await uploadAvatarAsset(result.assets[0]);
       }
     } catch (error) {
-      console.error('Error taking photo:', error);
+      logger.warn('Failed to take photo');
       Alert.alert('Error', 'Failed to take photo');
     }
   };
@@ -237,10 +277,10 @@ export default function AccountDetailsScreen({ navigation }: any) {
       });
 
       if (!result.canceled && result.assets[0]) {
-        await saveAvatar(result.assets[0].uri);
+        await uploadAvatarAsset(result.assets[0]);
       }
     } catch (error) {
-      console.error('Error picking image:', error);
+      logger.warn('Failed to pick image');
       Alert.alert('Error', 'Failed to pick image');
     }
   };
@@ -256,13 +296,15 @@ export default function AccountDetailsScreen({ navigation }: any) {
           style: 'destructive',
           onPress: async () => {
             try {
-              await AsyncStorage.removeItem('authToken');
-              await AsyncStorage.removeItem('user');
-              // Keep avatar even after logout
-              // await AsyncStorage.removeItem('userAvatar');
-              navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+              await disconnectCurrentPushInstallation();
+              await clearLocalAuthSession();
+              if (onLogout) {
+                onLogout();
+              } else {
+                navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+              }
             } catch (error) {
-              console.error('Error logging out:', error);
+              logger.warn('Failed to complete logout');
               Alert.alert('Error', 'Failed to log out');
             }
           },
@@ -381,7 +423,15 @@ export default function AccountDetailsScreen({ navigation }: any) {
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         {/* Header */}
-        <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}
+        <View
+          style={[
+            styles.header,
+            {
+              backgroundColor: colors.surface,
+              borderBottomColor: `${colors.border}CC`,
+              shadowColor: '#000',
+            },
+          ]}
         >
           <TouchableOpacity
             style={styles.backButton}
@@ -394,21 +444,43 @@ export default function AccountDetailsScreen({ navigation }: any) {
         </View>
 
         {/* Avatar Section */}
-        <View style={[styles.avatarSection, { backgroundColor: colors.surface }]}>
+        <View
+          style={[
+            styles.avatarSection,
+            {
+              backgroundColor: colors.surface,
+              borderColor: `${colors.border}D6`,
+              shadowColor: '#000',
+            },
+          ]}
+        >
           <TouchableOpacity
             style={styles.avatarContainer}
             onPress={handleAvatarPress}
             activeOpacity={0.8}
           >
-            {avatarUri ? (
-              <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
+            {sanitizedAvatarUri && !avatarLoadFailed ? (
+              <Image
+                source={{ uri: sanitizedAvatarUri }}
+                style={styles.avatarImage}
+                onError={() => {
+                  if (__DEV__) {
+                    logger.warn('Avatar image failed to load on Account screen');
+                  }
+                  setAvatarLoadFailed(true);
+                }}
+              />
             ) : (
               <View style={[styles.avatarPlaceholder, { backgroundColor: colors.primary }]}>
                 <Text style={[styles.avatarInitials, { color: colors.surface }]}>{getInitials()}</Text>
               </View>
             )}
             <View style={[styles.avatarEditBadge, { backgroundColor: colors.primary, borderColor: colors.surface }]}>
-              <MaterialIcons name="camera-alt" size={16} color={colors.surface} />
+              {avatarUpdating ? (
+                <ActivityIndicator size="small" color={colors.surface} />
+              ) : (
+                <MaterialIcons name="camera-alt" size={16} color={colors.surface} />
+              )}
             </View>
           </TouchableOpacity>
 
@@ -426,8 +498,16 @@ export default function AccountDetailsScreen({ navigation }: any) {
 
         {/* Settings List */}
         <View style={styles.settingsSection}>
-          <Text style={[styles.sectionTitle, { color: colors.mutedText }]}>Settings</Text>
-          <View style={[styles.settingsList, { backgroundColor: colors.surface }]}
+          <Text style={[styles.sectionTitle, { color: colors.mutedText }]}>SETTINGS</Text>
+          <View
+            style={[
+              styles.settingsList,
+              {
+                backgroundColor: colors.surface,
+                borderColor: `${colors.border}D6`,
+                shadowColor: '#000',
+              },
+            ]}
           >
             {settingRows.map((row, index) => (
               <TouchableOpacity
@@ -441,7 +521,7 @@ export default function AccountDetailsScreen({ navigation }: any) {
                 activeOpacity={0.7}
               >
                 <View style={styles.settingRowLeft}>
-                  <View style={[styles.settingIconContainer, { backgroundColor: colors.background }]}>
+                  <View style={[styles.settingIconContainer, { backgroundColor: colors.background, borderColor: `${colors.border}CC` }]}> 
                     <MaterialIcons name={row.icon} size={22} color={colors.primary} />
                   </View>
                   <Text style={[styles.settingLabel, { color: colors.text }]}>{row.label}</Text>
@@ -460,7 +540,14 @@ export default function AccountDetailsScreen({ navigation }: any) {
 
         {/* Logout Button */}
         <TouchableOpacity
-          style={[styles.logoutButton, { backgroundColor: colors.surface, borderColor: colors.danger }]}
+          style={[
+            styles.logoutButton,
+            {
+              backgroundColor: colors.surface,
+              borderColor: colors.danger,
+              shadowColor: colors.danger,
+            },
+          ]}
           onPress={handleLogout}
           activeOpacity={0.8}
         >
@@ -480,7 +567,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#F5F5F5',
   },
   scrollContent: {
-    paddingBottom: 20,
+    paddingBottom: 22,
   },
   loadingContainer: {
     flex: 1,
@@ -520,18 +607,26 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E5E5',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
   },
   backButton: {
-    padding: 8,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
+    fontSize: 19,
+    fontWeight: '800',
     color: '#000000',
   },
   headerSpacer: {
@@ -539,13 +634,21 @@ const styles = StyleSheet.create({
   },
   avatarSection: {
     alignItems: 'center',
-    paddingVertical: 32,
+    paddingVertical: 28,
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 18,
+    borderRadius: 18,
+    borderWidth: 1,
     backgroundColor: '#FFFFFF',
-    marginBottom: 16,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
+    elevation: 3,
   },
   avatarContainer: {
     position: 'relative',
-    marginBottom: 16,
+    marginBottom: 14,
   },
   avatarImage: {
     width: 100,
@@ -578,50 +681,57 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 3,
     borderColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.18,
+    shadowRadius: 4,
+    elevation: 3,
   },
   userName: {
-    fontSize: 24,
-    fontWeight: '700',
+    fontSize: 25,
+    fontWeight: '800',
     color: '#000000',
-    marginBottom: 4,
+    marginBottom: 3,
   },
   userEmail: {
-    fontSize: 15,
+    fontSize: 14,
+    fontWeight: '500',
     color: '#666666',
-    marginBottom: 8,
+    marginBottom: 7,
   },
   memberSince: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#999999',
   },
   settingsSection: {
     paddingHorizontal: 16,
-    marginBottom: 24,
+    marginBottom: 26,
   },
   sectionTitle: {
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 12,
+    fontWeight: '800',
     color: '#666666',
-    marginBottom: 12,
+    marginBottom: 10,
     marginLeft: 4,
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 0.9,
   },
   settingsList: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: 16,
+    borderWidth: 1,
     overflow: 'hidden',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 3,
   },
   settingRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 16,
+    paddingVertical: 15,
     paddingHorizontal: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#F0F0F0',
@@ -641,20 +751,22 @@ const styles = StyleSheet.create({
   settingIconContainer: {
     width: 36,
     height: 36,
-    borderRadius: 8,
+    borderRadius: 10,
+    borderWidth: 1,
     backgroundColor: '#F0F7FF',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+    marginRight: 13,
   },
   settingLabel: {
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '600',
     color: '#000000',
   },
   settingValue: {
-    fontSize: 14,
-    fontWeight: '500',
+    fontSize: 13,
+    fontWeight: '600',
+    marginRight: 2,
   },
   logoutButton: {
     flexDirection: 'row',
@@ -662,15 +774,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#FFFFFF',
     marginHorizontal: 16,
-    paddingVertical: 16,
-    borderRadius: 12,
+    paddingVertical: 15,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#FF4D4D',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 3,
   },
   logoutButtonText: {
     fontSize: 16,

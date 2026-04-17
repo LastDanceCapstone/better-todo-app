@@ -2,20 +2,29 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Linking,
+  ScrollView,
   StyleSheet,
   Switch,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../theme';
+import { getUserFriendlyErrorMessage } from '../config/api';
 import {
   getNotificationSettings,
   NotificationSettings,
   saveNotificationSettings,
 } from '../config/notificationSettings';
+import { logger } from '../utils/logger';
+import {
+  NotificationPermissionState,
+  syncPushNotificationRegistration,
+} from '../services/pushNotifications';
 
 type NotificationSettingKey = keyof NotificationSettings;
 
@@ -27,6 +36,12 @@ interface SettingItem {
 }
 
 const SETTING_ITEMS: SettingItem[] = [
+  {
+    key: 'pushEnabled',
+    label: 'Push Alerts',
+    description: 'Deliver notification events as iPhone push alerts when device permission is granted.',
+    icon: 'notifications-active',
+  },
   {
     key: 'morningOverview',
     label: 'Morning Overview',
@@ -40,13 +55,13 @@ const SETTING_ITEMS: SettingItem[] = [
     icon: 'nights-stay',
   },
   {
-    key: 'taskDueReminders',
+    key: 'dueSoonNotifications',
     label: 'Task Due Reminders',
     description: 'Get notified when tasks are approaching their due time.',
     icon: 'schedule',
   },
   {
-    key: 'overdueTaskAlerts',
+    key: 'overdueNotifications',
     label: 'Overdue Task Alerts',
     description: 'Get notified when tasks become overdue.',
     icon: 'warning',
@@ -57,14 +72,19 @@ export default function NotificationSettingsScreen({ navigation }: any) {
   const { colors } = useTheme();
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState<NotificationSettings | null>(null);
+  const [permissionStatus, setPermissionStatus] = useState<NotificationPermissionState>('undetermined');
+  const [syncingDevice, setSyncingDevice] = useState(false);
 
   const loadSettings = useCallback(async () => {
     setLoading(true);
     try {
       const loaded = await getNotificationSettings();
       setSettings(loaded);
+
+      const pushState = await syncPushNotificationRegistration({ allowPrompt: false });
+      setPermissionStatus(pushState.permissionStatus);
     } catch (error) {
-      console.error('Failed to load notification settings:', error);
+      logger.warn('Failed to load notification settings');
       Alert.alert('Error', 'Failed to load notification settings. Please try again.');
     } finally {
       setLoading(false);
@@ -74,6 +94,12 @@ export default function NotificationSettingsScreen({ navigation }: any) {
   useEffect(() => {
     loadSettings();
   }, [loadSettings]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadSettings();
+    }, [loadSettings])
+  );
 
   const updateSetting = useCallback(async (key: NotificationSettingKey, value: boolean) => {
     if (!settings) return;
@@ -88,11 +114,63 @@ export default function NotificationSettingsScreen({ navigation }: any) {
     try {
       await saveNotificationSettings(nextSettings);
     } catch (error) {
-      console.error('Failed to save notification settings:', error);
+      logger.warn('Failed to save notification settings');
       setSettings(settings);
       Alert.alert('Error', 'Failed to save setting. Please try again.');
     }
   }, [settings]);
+
+  const handleDevicePermissionAction = useCallback(async () => {
+    if (permissionStatus === 'denied') {
+      const canOpenAppSettings = await Linking.canOpenURL('app-settings:');
+      if (canOpenAppSettings) {
+        await Linking.openURL('app-settings:');
+        return;
+      }
+
+      await Linking.openSettings();
+      return;
+    }
+
+    setSyncingDevice(true);
+    try {
+      const pushState = await syncPushNotificationRegistration({ allowPrompt: true });
+      setPermissionStatus(pushState.permissionStatus);
+
+      if (pushState.permissionStatus === 'granted' && pushState.isRegistered) {
+        Alert.alert('Notifications Enabled', 'This device is now registered for Prioritize reminders.');
+      }
+    } catch (error: unknown) {
+      logger.warn('Failed to sync push notification registration');
+      Alert.alert('Error', getUserFriendlyErrorMessage(error, 'Failed to configure push notifications.'));
+    } finally {
+      setSyncingDevice(false);
+    }
+  }, [permissionStatus]);
+
+  const permissionIcon = permissionStatus === 'granted'
+    ? 'notifications-active'
+    : permissionStatus === 'denied'
+      ? 'notifications-off'
+      : 'notifications-none';
+
+  const permissionTitle = permissionStatus === 'granted'
+    ? 'Push notifications are enabled'
+    : permissionStatus === 'denied'
+      ? 'Push notifications are disabled on this iPhone'
+      : 'Allow push notifications on this iPhone';
+
+  const permissionDescription = permissionStatus === 'granted'
+    ? 'Prioritize can deliver reminders and summaries to this device when the preferences below are enabled.'
+    : permissionStatus === 'denied'
+      ? 'Open iPhone Settings to turn notifications back on for Prioritize.'
+      : 'Enable push access so Prioritize can deliver due reminders, overdue alerts, and optional daily summaries.';
+
+  const permissionButtonLabel = permissionStatus === 'granted'
+    ? 'Refresh device registration'
+    : permissionStatus === 'denied'
+      ? 'Open iPhone Settings'
+      : 'Enable notifications';
 
   if (loading || !settings) {
     return (
@@ -100,13 +178,13 @@ export default function NotificationSettingsScreen({ navigation }: any) {
         <View style={[styles.header, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
           <TouchableOpacity
             onPress={() => navigation.goBack()}
-            style={styles.backButton}
+            style={styles.headerBtn}
             activeOpacity={0.7}
           >
             <MaterialIcons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Notification Settings</Text>
-          <View style={styles.backButton} />
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Notifications</Text>
+          <View style={styles.headerBtn} />
         </View>
 
         <View style={styles.loadingContainer}>
@@ -122,20 +200,49 @@ export default function NotificationSettingsScreen({ navigation }: any) {
       <View style={[styles.header, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
         <TouchableOpacity
           onPress={() => navigation.goBack()}
-          style={styles.backButton}
+          style={styles.headerBtn}
           activeOpacity={0.7}
         >
           <MaterialIcons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Notification Settings</Text>
-        <View style={styles.backButton} />
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Notifications</Text>
+        <View style={styles.headerBtn} />
       </View>
 
-      <View style={styles.content}>
-        <Text style={[styles.subtitle, { color: colors.mutedText }]}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <Text style={[styles.introText, { color: colors.mutedText }]}>
           Choose which reminders and summaries you want to receive.
         </Text>
 
+        <Text style={[styles.sectionLabel, { color: colors.mutedText }]}>DEVICE</Text>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
+          <View style={[styles.permissionCard, { borderBottomColor: colors.border }]}> 
+            <View style={styles.rowLeft}> 
+              <View style={[styles.iconWrap, { backgroundColor: `${colors.primary}12` }]}> 
+                <MaterialIcons name={permissionIcon as any} size={19} color={colors.primary} />
+              </View>
+              <View style={styles.textWrap}> 
+                <Text style={[styles.rowTitle, { color: colors.text }]}>{permissionTitle}</Text>
+                <Text style={[styles.rowDescription, { color: colors.mutedText }]}>{permissionDescription}</Text>
+              </View>
+            </View>
+          </View>
+
+          <TouchableOpacity
+            style={[styles.permissionButton, { backgroundColor: colors.primary }]}
+            onPress={handleDevicePermissionAction}
+            activeOpacity={0.85}
+            disabled={syncingDevice}
+          >
+            {syncingDevice ? (
+              <ActivityIndicator size="small" color={colors.surface} />
+            ) : (
+              <Text style={[styles.permissionButtonText, { color: colors.surface }]}>{permissionButtonLabel}</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        <Text style={[styles.sectionLabel, { color: colors.mutedText }]}>PREFERENCES</Text>
         <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           {SETTING_ITEMS.map((item, index) => (
             <View
@@ -147,8 +254,8 @@ export default function NotificationSettingsScreen({ navigation }: any) {
               ]}
             >
               <View style={styles.rowLeft}>
-                <View style={[styles.iconWrap, { backgroundColor: colors.background }]}>
-                  <MaterialIcons name={item.icon} size={20} color={colors.primary} />
+                <View style={[styles.iconWrap, { backgroundColor: `${colors.primary}12` }]}>
+                  <MaterialIcons name={item.icon} size={19} color={colors.primary} />
                 </View>
                 <View style={styles.textWrap}>
                   <Text style={[styles.rowTitle, { color: colors.text }]}>{item.label}</Text>
@@ -166,7 +273,9 @@ export default function NotificationSettingsScreen({ navigation }: any) {
             </View>
           ))}
         </View>
-      </View>
+
+        <View style={{ height: 32 }} />
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -179,11 +288,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 12,
+    paddingHorizontal: 16,
     paddingVertical: 14,
-    borderBottomWidth: 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  backButton: {
+  headerBtn: {
     width: 40,
     height: 40,
     alignItems: 'center',
@@ -195,22 +304,52 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   content: {
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 20,
   },
-  subtitle: {
+  introText: {
     fontSize: 14,
     lineHeight: 20,
-    marginBottom: 14,
+    marginBottom: 20,
+  },
+  sectionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginBottom: 8,
+    marginLeft: 4,
   },
   card: {
-    borderWidth: 1,
-    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 16,
     overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  permissionCard: {
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  permissionButton: {
+    margin: 14,
+    minHeight: 46,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  permissionButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
   },
   row: {
     paddingVertical: 14,
-    paddingHorizontal: 12,
-    borderBottomWidth: 1,
+    paddingHorizontal: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -223,22 +362,23 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 10,
+    gap: 12,
   },
   iconWrap: {
-    width: 34,
-    height: 34,
-    borderRadius: 8,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   textWrap: {
     flex: 1,
+    paddingTop: 1,
   },
   rowTitle: {
     fontSize: 15,
     fontWeight: '600',
-    marginBottom: 2,
+    marginBottom: 3,
   },
   rowDescription: {
     fontSize: 13,

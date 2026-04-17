@@ -1,152 +1,176 @@
-# Capstone Project Workspace
+# Prioritize
 
-This repository will serve as the general workspace for all changes, updates, and creations for the capstone project
+Prioritize is a full-stack productivity app with a React Native mobile client and a Node.js API. It helps users plan work, execute focused sessions, and stay on schedule with smart reminders.
 
-----------
+## App Overview
 
-# Team Information
-- **Team Name:** The Last Dance
-- **Members:**
-  - London Haith
-  - Johnathan Dorsey
-  - Samwel Makyao
-  - Deevya Patel
-  - Ryan StClair
- - **Overseeing Professor:** David Keathly
+Prioritize supports:
+- Task and subtask management
+- AI-assisted task parsing from natural language
+- Focus mode sessions
+- Calendar sync for due tasks
+- Push notifications and in-app notification center
+- Productivity analytics dashboard
+- Authentication with email/password and Google Sign-In
 
-----------
- 
-# Project Links
-- **Kanban Board:** https://trello.com/b/8E3yaviu/sprint-0
-- **Team Zoom:** https://us05web.zoom.us/j/87439424208?pwd=IuVsDdhyVNlJAh7mNVkwqRSrUSQjti.1
-  -   Meeting ID: 874 3942 4208
-  -   Passcode: 7epwSw
-- **GitHub Repo:** https://github.com/LastDanceCapstone/better-todo-app
+## Tech Stack
 
-----------
+Mobile:
+- React Native (Expo)
+- TypeScript
+- React Navigation
 
-# Prioritize – Todo App
+Backend:
+- Node.js
+- Express
+- Prisma ORM
+- PostgreSQL (production)
 
-A modern todo application with React Native mobile frontend and Node.js backend with Prisma ORM.
+Integrations:
+- OpenAI (task parsing and audio transcription)
+- Google OAuth
+- AWS S3 (avatar uploads)
+- Resend (transactional email)
 
+Deployment:
+- Railway (backend + database)
+- Expo EAS (mobile builds)
 
+## Repository Structure
 
-### Prerequisites / Installs
-- **Node.js**
-- **npm** 
-- **Expo CLI** - Install globally: `npm install -g @expo/cli`
-- **Expo Go app** on your mobile device
+- `mobile/` Expo React Native app
+- `backend/` Express API + Prisma schema/migrations
 
-### Mobile Setup
+## Setup Instructions
 
-1. **Navigate to mobile directory:**
-   ```bash
-   cd mobile
-   ```
+### 1) Backend Setup
 
-2. **Install dependencies:**
-   ```bash
-   npm install
-   ```
-
-3. **Start Expo development server:**
-   ```bash
-   # If your mobile device and computer are on the same WiFi network:
-   npx expo start
-   
-   # If they're on different networks or you're having connection issues:
-   npx expo start --tunnel
-   ```
-
-4. **Run on your device:**
-   - Open **Expo Go** app on your phone
-   - Scan the QR code displayed in your terminal
-   - The app should load and display the Login screen
-
-### Backend Setup
-
-1. **Navigate to backend directory:**
-   ```bash
-   cd backend
-   ```
-
-2. **Install dependencies:**
-   ```bash
-   npm install
-   ```
-
-3. **Set up environment variables:**
-   - Copy the `.env` file (already exists)
-   - Update `DATABASE_URL` if needed (currently set to SQLite)
-
-4. **Set up database:**
-   ```bash
-   # Generate Prisma client
-   npx prisma generate
-   
-   # Push schema to database (creates tables)
-   npx prisma db push
-   ```
-
-5. **Start the development server:**
-   ```bash
-   npm run dev
-   ```
-   
-   Server will start at: `http://localhost:3000`
-
-6. **Test backend health:**
-   - Open browser to: `http://localhost:3000/api/health`
-   - Should see: `{"status":"OK","message":"Server is running"}`
-
-### Database Management (Prisma Studio)
-
-**View and manage your database:**
 ```bash
 cd backend
-npx prisma studio
+npm install
+cp .env.example .env
 ```
-- Opens Prisma Studio at: `http://localhost:5555`
-- Provides a visual interface to view/edit database records
 
-----------
+Run migrations and start dev server:
 
-## Running the Complete Application
-
-
-**Terminal 1 - Backend:**
 ```bash
-cd backend
+npx prisma generate
+npx prisma migrate deploy
 npm run dev
 ```
 
-**Terminal 2 - Mobile:**
+Backend runs on `http://localhost:3000` by default.
+
+### 2) Mobile Setup
+
 ```bash
 cd mobile
-npx expo start
+npm install
+cp .env.example .env
 ```
 
-**Terminal 3 - Database Studio:**
+Start Expo:
+
+```bash
+npx expo start --dev-client --clear
+```
+
+Use a development build on device/simulator for push notifications and native integrations.
+
+## Environment Variables
+
+### Backend (`backend/.env`)
+
+Required:
+- `NODE_ENV`: Runtime environment (`development`, `production`, `test`)
+- `PORT`: API port
+- `DATABASE_URL`: PostgreSQL connection string
+- `JWT_SECRET`: JWT signing secret
+- `GOOGLE_CLIENT_ID`: OAuth client ID for Google token verification
+- `OPENAI_API_KEY`: OpenAI API key
+- `RESEND_API_KEY`: Resend API key
+- `MAIL_FROM`: Sender address for transactional email
+
+Avatar uploads:
+- `AWS_REGION`: AWS region
+- `AWS_ACCESS_KEY_ID`: AWS access key
+- `AWS_SECRET_ACCESS_KEY`: AWS secret key
+- `S3_BUCKET_NAME`: S3 bucket for avatar objects
+
+Optional backend config:
+- `OPENAI_MODEL`: LLM model for parsing
+- `WHISPER_MODEL`: Model for audio transcription
+- `SWAGGER_SERVER_URL`: Override Swagger server URL
+- `RAILWAY_PUBLIC_DOMAIN`: Railway domain for URL generation
+- `RAILWAY_STATIC_URL`: Railway static URL fallback
+- `FRONTEND_URL`: Allowed browser origin
+- `MOBILE_DEV_URL`: Allowed mobile/web dev origin
+- `PRODUCTION_APP_URL`: Allowed production app origin
+- `CORS_ORIGINS`: Comma-separated allow-list for browser origins
+- `MORNING_NOTIFICATION_CRON`: Morning schedule cron
+- `EVENING_NOTIFICATION_CRON`: Evening schedule cron
+- `DUE_SOON_NOTIFICATION_CRON`: Due soon schedule cron
+- `OVERDUE_NOTIFICATION_CRON`: Overdue schedule cron
+
+### Mobile (`mobile/.env`)
+
+Required:
+- `EXPO_PUBLIC_API_URL`: Base URL for backend API (for example `https://<railway-domain>`)
+
+Optional:
+- `EXPO_PUBLIC_APP_ENV`: App environment label
+- `EXPO_PUBLIC_PRODUCTION_API_URL`: Production API URL validation target for EAS production builds
+- `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`: iOS Google OAuth client ID
+- `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`: Web Google OAuth client ID
+
+## API and Swagger
+
+Swagger UI:
+- `GET /api/docs`
+
+OpenAPI JSON:
+- `GET /api/docs.json`
+
+Health checks:
+- `GET /api/health`
+- `GET /health`
+
+## Deployment Notes
+
+Backend:
+- Railway deploy command: `railway up`
+- Start command runs migrations before boot (`prisma migrate deploy`)
+
+Mobile:
+- EAS development build: `eas build --profile development --platform ios`
+- EAS production profile validates that `EXPO_PUBLIC_API_URL` is HTTPS and matches `EXPO_PUBLIC_PRODUCTION_API_URL`
+
+## Testing
+
+Backend tests:
+
 ```bash
 cd backend
-npx prisma studio
+npm test -- --runInBand
 ```
 
+Mobile tests:
 
-----------
+```bash
+cd mobile
+npm test -- --runInBand
+```
 
-## 📱 Mobile App Connection Setup
+## Reproducible Generated Outputs
 
-To connect your mobile app to the backend server:
+This repository keeps source files only. Generated artifacts (for example backend `dist/`) are intentionally not committed.
 
-1. **Find your computer's IP address:**
-   - Windows: `ipconfig`
-   - Mac/Linux: `ifconfig`
-   - Look for IPv4 address (e.g., `192.168.1.150`)
+To regenerate backend runtime output from source:
 
-2. **Update mobile app configuration:**
-   - Edit `mobile/src/screens/LoginScreen.tsx`
-   - Replace `localhost` with your IP address in the fetch URLs
-   - Example: `http://192.168.1.150:3000/api/login`
+```bash
+cd backend
+npm install
+npm run build
+```
 
-----------
+This rebuilds `dist/` from TypeScript sources and Prisma client generation.

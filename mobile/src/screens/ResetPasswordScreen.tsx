@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   View,
   Text,
   TouchableOpacity,
@@ -13,10 +14,20 @@ import AppInput from '../components/AppInput';
 import AppButton from '../components/AppButton';
 import ScreenWrapper from '../components/ScreenWrapper';
 import GlassCard from '../components/GlassCard';
+import {
+  getUserFriendlyErrorMessage,
+  requestPasswordReset,
+  submitPasswordReset,
+  validatePasswordResetToken,
+} from '../config/api';
 
-const API_BASE_URL = 'https://prioritize-production-3835.up.railway.app';
+type ResetPasswordScreenProps = {
+  route: any;
+  navigation: any;
+  onPasswordResetSuccess?: (params?: { email?: string; message?: string }) => void;
+};
 
-export default function ResetPasswordScreen({ route, navigation }: any) {
+export default function ResetPasswordScreen({ route, navigation, onPasswordResetSuccess }: ResetPasswordScreenProps) {
   const { colors } = useTheme();
   const { email, token } = route.params || {};
   
@@ -26,6 +37,78 @@ export default function ResetPasswordScreen({ route, navigation }: any) {
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [tokenValidationLoading, setTokenValidationLoading] = useState(false);
+  const [resolvedEmail, setResolvedEmail] = useState(email || '');
+  const [requestingReset, setRequestingReset] = useState(false);
+
+  const finishAfterSuccess = (nextEmail?: string) => {
+    const message = 'Password updated successfully. Please sign in again.';
+
+    if (onPasswordResetSuccess) {
+      onPasswordResetSuccess({
+        ...(nextEmail ? { email: nextEmail } : {}),
+        message,
+      });
+      return;
+    }
+
+    navigation.replace('Login', {
+      ...(nextEmail ? { email: nextEmail } : {}),
+      postResetMessage: message,
+    });
+  };
+
+  useEffect(() => {
+    const providedToken = String(token || '').trim();
+    if (!providedToken) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const runValidation = async () => {
+      try {
+        setTokenValidationLoading(true);
+        const result = await validatePasswordResetToken(providedToken);
+        if (!cancelled && result.email) {
+          setResolvedEmail(result.email);
+        }
+      } catch {
+        if (!cancelled) {
+          Alert.alert('Invalid Link', 'This reset link is invalid or expired. Request a new reset email and try again.');
+        }
+      } finally {
+        if (!cancelled) {
+          setTokenValidationLoading(false);
+        }
+      }
+    };
+
+    void runValidation();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  const handleRequestNewToken = async () => {
+    const targetEmail = String(resolvedEmail || email || '').trim().toLowerCase();
+    if (!targetEmail) {
+      Alert.alert('Missing Email', 'Go back and enter your email to request a reset code.');
+      return;
+    }
+
+    try {
+      setRequestingReset(true);
+      await requestPasswordReset(targetEmail);
+      Alert.alert('Reset Sent', `A new reset code was sent to ${targetEmail}.`);
+    } catch (error: unknown) {
+      const message = getUserFriendlyErrorMessage(error, 'Unable to send reset email right now.');
+      Alert.alert('Request Failed', message);
+    } finally {
+      setRequestingReset(false);
+    }
+  };
 
   const handleResetPassword = async () => {
     if (!resetToken.trim()) {
@@ -38,8 +121,8 @@ export default function ResetPasswordScreen({ route, navigation }: any) {
       return;
     }
 
-    if (newPassword.length < 6) {
-      Alert.alert('Error', 'Password must be at least 6 characters');
+    if (newPassword.length < 8) {
+      Alert.alert('Error', 'Password must be at least 8 characters');
       return;
     }
 
@@ -51,53 +134,21 @@ export default function ResetPasswordScreen({ route, navigation }: any) {
     setLoading(true);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/reset-password`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          token: resetToken.trim(),
-          newPassword,
-        }),
-      });
-
-      // Check if response is JSON
-      const contentType = response.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        const text = await response.text();
-        console.error('Non-JSON response:', text);
-        Alert.alert(
-          'Error',
-          `Server returned an error. Status: ${response.status}. Check backend logs.`
-        );
-        return;
-      }
-
-      const data = await response.json();
-
-      if (response.ok) {
-        Alert.alert(
-          'Success',
-          'Your password has been reset successfully. You can now login with your new password.',
-          [
-            {
-              text: 'OK',
-              onPress: () => navigation.navigate('Login'),
-            },
-          ]
-        );
-      } else {
-        Alert.alert('Error', data.error || 'Failed to reset password');
-      }
-    } catch (error: any) {
-      console.error('Error:', error);
+      await submitPasswordReset(resetToken.trim(), newPassword);
+      const normalizedEmail = String(resolvedEmail || email || '').trim().toLowerCase();
       Alert.alert(
-        'Error',
-        error.message?.includes('JSON')
-          ? 'Server returned invalid response. Make sure backend is running and endpoint exists.'
-          : 'Failed to reset password. Please check your connection.'
+        'Success',
+        'Password updated successfully. Please sign in again.',
+        [
+          {
+            text: 'Go to Sign In',
+            onPress: () => finishAfterSuccess(normalizedEmail || undefined),
+          },
+        ]
       );
+    } catch (error: unknown) {
+      const message = getUserFriendlyErrorMessage(error, 'Failed to reset password. Please try again.');
+      Alert.alert('Error', message);
     } finally {
       setLoading(false);
     }
@@ -113,7 +164,7 @@ export default function ResetPasswordScreen({ route, navigation }: any) {
       >
         <View style={styles.topBar}>
           <TouchableOpacity
-            onPress={() => navigation.goBack()}
+            onPress={() => navigation.canGoBack() ? navigation.goBack() : navigation.replace('Login')}
             style={[styles.backButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
           >
             <MaterialIcons name="arrow-back" size={22} color={colors.text} />
@@ -131,11 +182,22 @@ export default function ResetPasswordScreen({ route, navigation }: any) {
           <View style={styles.infoRow}>
             <MaterialIcons name="info-outline" size={16} color={colors.primary} />
             <Text style={[styles.infoText, { color: colors.mutedText }]}> 
-              {email
-                ? `Use the reset token generated for ${email}`
-                : 'Use the reset token from your backend console.'}
+              {resolvedEmail
+                ? `Use the reset code sent to ${resolvedEmail}.`
+                : 'Use the reset code from your password reset email.'}
             </Text>
           </View>
+          <TouchableOpacity
+            onPress={handleRequestNewToken}
+            disabled={requestingReset}
+            style={styles.requestAnotherButton}
+          >
+            {requestingReset ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : (
+              <Text style={[styles.requestAnotherText, { color: colors.primary }]}>Request another reset code</Text>
+            )}
+          </TouchableOpacity>
         </GlassCard>
 
         <GlassCard style={styles.formCard}>
@@ -196,8 +258,8 @@ export default function ResetPasswordScreen({ route, navigation }: any) {
           <AppButton
             title="Reset Password"
             onPress={handleResetPassword}
-            disabled={loading}
-            loading={loading}
+            disabled={loading || tokenValidationLoading}
+            loading={loading || tokenValidationLoading}
             style={styles.button}
           />
         </GlassCard>
@@ -263,5 +325,15 @@ const styles = StyleSheet.create({
   },
   button: {
     marginTop: 2,
+  },
+  requestAnotherButton: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    minHeight: 32,
+    justifyContent: 'center',
+  },
+  requestAnotherText: {
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

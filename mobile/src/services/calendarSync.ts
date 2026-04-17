@@ -6,6 +6,7 @@ import {
   getPrioritizeCalendarIdIfExists,
   requestCalendarPermission,
 } from './calendarApp';
+import { logger } from '../utils/logger';
 
 const TASK_EVENT_MAP_STORAGE_KEY = 'prioritizeCalendarTaskEventMapV1';
 const DEFAULT_EVENT_DURATION_MINUTES = 45;
@@ -72,7 +73,7 @@ function buildEventInput(task: Task) {
   const startDate = parseDueDate(task.dueAt);
   if (!startDate) {
     if (task.dueAt) {
-      console.warn('[CalendarSync] Invalid due date, skipping task sync for taskId=' + task.id);
+      logger.warn('[CalendarSync] Invalid due date, skipping task sync');
     }
     return null;
   }
@@ -148,18 +149,18 @@ async function deleteMappedEventIfPresent(
 ): Promise<void> {
   const event = await getPrioritizeEventById(entry.eventId);
   if (!event) {
-    console.warn('[CalendarSync] Mapped event not found during delete, eventId=' + entry.eventId);
+    logger.warn('[CalendarSync] Mapped event not found during delete');
     return;
   }
   if (event.calendarId !== prioritizeCalendarId) {
-    console.warn('[CalendarSync] Refusing delete for non-Prioritize calendar eventId=' + entry.eventId);
+    logger.warn('[CalendarSync] Refusing delete for non-Prioritize calendar event');
     return;
   }
 
   try {
     await Calendar.deleteEventAsync(entry.eventId);
   } catch (error) {
-    console.error('[CalendarSync] Failed deleting eventId=' + entry.eventId, error);
+    logger.warn('[CalendarSync] Failed deleting mapped event');
     throw error;
   }
 }
@@ -190,7 +191,7 @@ async function syncTaskWithMapping(
     try {
       eventId = await Calendar.createEventAsync(prioritizeCalendarId, eventInput);
     } catch (error) {
-      console.error('[CalendarSync] Failed creating calendar event for taskId=' + taskId, error);
+      logger.warn('[CalendarSync] Failed creating calendar event');
       throw error;
     }
     mapping[taskId] = { eventId, calendarId: prioritizeCalendarId, signature };
@@ -202,17 +203,17 @@ async function syncTaskWithMapping(
 
   if (eventMissing) {
     if (existingMap && !existingEvent) {
-      console.warn('[CalendarSync] Missing mapped event, recreating for taskId=' + taskId);
+      logger.warn('[CalendarSync] Missing mapped event, recreating');
     }
     if (existingEvent && existingEvent.calendarId !== prioritizeCalendarId) {
-      console.warn('[CalendarSync] Mapped event points to non-Prioritize calendar, recreating taskId=' + taskId);
+      logger.warn('[CalendarSync] Mapped event points to non-Prioritize calendar, recreating');
     }
 
     let recreatedEventId = '';
     try {
       recreatedEventId = await Calendar.createEventAsync(prioritizeCalendarId, eventInput);
     } catch (error) {
-      console.error('[CalendarSync] Failed recreating event for taskId=' + taskId, error);
+      logger.warn('[CalendarSync] Failed recreating calendar event');
       throw error;
     }
 
@@ -230,7 +231,7 @@ async function syncTaskWithMapping(
     try {
       await Calendar.updateEventAsync(existingMap.eventId, eventInput);
     } catch (error) {
-      console.error('[CalendarSync] Failed updating eventId=' + existingMap.eventId, error);
+      logger.warn('[CalendarSync] Failed updating mapped calendar event');
       throw error;
     }
 
@@ -259,7 +260,7 @@ function applyResultToSummary(summary: CalendarSyncSummary, result: SyncTaskResu
 async function ensurePermissionAndCalendar(): Promise<string> {
   const ok = await requestCalendarPermission();
   if (!ok) {
-    console.warn('[CalendarSync] Calendar permission denied. Sync skipped.');
+    logger.warn('[CalendarSync] Calendar permission denied. Sync skipped.');
     throw new Error('Calendar permission not granted.');
   }
 
@@ -274,7 +275,7 @@ export async function syncTaskToCalendar(task: Task): Promise<SyncTaskResult> {
     await saveTaskEventMapping(mapping);
     return result;
   } catch (error) {
-    console.error('[CalendarSync] syncTaskToCalendar failed for taskId=' + task.id, error);
+    logger.warn('[CalendarSync] syncTaskToCalendar failed');
     return { taskId: task.id, action: 'skipped' };
   }
 }
@@ -297,7 +298,7 @@ export async function syncAllTasksToCalendar(tasks: Task[]): Promise<CalendarSyn
       const result = await syncTaskWithMapping(task, mapping, prioritizeCalendarId);
       applyResultToSummary(summary, result);
     } catch (error) {
-      console.error('[CalendarSync] syncAll failed for taskId=' + task.id, error);
+      logger.warn('[CalendarSync] syncAll task operation failed');
       summary.skipped += 1;
     }
   }
@@ -311,13 +312,13 @@ export async function removeTaskFromCalendar(taskId: string): Promise<boolean> {
     const mapping = await loadTaskEventMapping();
     const entry = mapping[taskId];
     if (!entry) {
-      console.warn('[CalendarSync] Missing event mapping for deleted taskId=' + taskId);
+      logger.warn('[CalendarSync] Missing event mapping for deleted task');
       return false;
     }
 
     const permission = await requestCalendarPermission();
     if (!permission) {
-      console.warn('[CalendarSync] Calendar permission denied during remove for taskId=' + taskId);
+      logger.warn('[CalendarSync] Calendar permission denied during remove');
       return false;
     }
 
@@ -330,7 +331,7 @@ export async function removeTaskFromCalendar(taskId: string): Promise<boolean> {
     await saveTaskEventMapping(mapping);
     return true;
   } catch (error) {
-    console.error('[CalendarSync] removeTaskFromCalendar failed for taskId=' + taskId, error);
+    logger.warn('[CalendarSync] removeTaskFromCalendar failed');
     return false;
   }
 }
@@ -356,7 +357,7 @@ export async function reconcileCalendarSync(tasks: Task[]): Promise<CalendarSync
       const result = await syncTaskWithMapping(task, mapping, prioritizeCalendarId);
       applyResultToSummary(summary, result);
     } catch (error) {
-      console.error('[CalendarSync] reconcile failed for taskId=' + task.id, error);
+      logger.warn('[CalendarSync] reconcile task operation failed');
       summary.skipped += 1;
     }
   }
@@ -369,7 +370,7 @@ export async function reconcileCalendarSync(tasks: Task[]): Promise<CalendarSync
       delete mapping[taskId];
       summary.removed += 1;
     } catch (error) {
-      console.error('[CalendarSync] reconcile cleanup failed for taskId=' + taskId, error);
+      logger.warn('[CalendarSync] reconcile cleanup failed');
       summary.skipped += 1;
     }
   }

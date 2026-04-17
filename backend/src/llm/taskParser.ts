@@ -1,4 +1,6 @@
 import { TASK_PARSER_SYSTEM_PROMPT } from './taskParserPrompt';
+import { env } from '../config/env';
+import { logger } from '../utils/logger';
 
 type ParserErrorCode =
   | 'PARSER_CONFIG_ERROR'
@@ -410,10 +412,7 @@ function buildUserContent(text: string, timezoneSafe: string, nowIso: string, no
 }
 
 async function callOpenAI(model: string, systemPrompt: string, userContent: string): Promise<string> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new ParserConfigError('Missing OPENAI_API_KEY');
-  }
+  const apiKey = env.OPENAI_API_KEY;
 
   const fetchFn = await getFetchImplementation();
 
@@ -455,7 +454,7 @@ async function callOpenAI(model: string, systemPrompt: string, userContent: stri
 
 async function parseTaskWithOpenAI(text: string, timezone?: string): Promise<ParsedTask> {
   const startedAt = Date.now();
-  const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+  const model = env.OPENAI_MODEL;
   const now = new Date();
   const nowIso = now.toISOString();
   const timezoneSafe = timezone?.trim() || 'UTC';
@@ -466,29 +465,29 @@ async function parseTaskWithOpenAI(text: string, timezone?: string): Promise<Par
 
   let nowInTimezone: string;
   try {
-    nowInTimezone = new Intl.DateTimeFormat('en-CA', {
+    nowInTimezone = new Intl.DateTimeFormat('en-US', {
       timeZone: timezoneSafe,
       year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
+      month: 'long',
+      day: 'numeric',
+      hour: 'numeric',
       minute: '2-digit',
       second: '2-digit',
-      hour12: false,
+      hour12: true,
       weekday: 'long',
-    }).format(now);
+    }).format(now) + ' (local)';
   } catch {
-    nowInTimezone = new Intl.DateTimeFormat('en-CA', {
+    nowInTimezone = new Intl.DateTimeFormat('en-US', {
       timeZone: 'UTC',
       year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
+      month: 'long',
+      day: 'numeric',
+      hour: 'numeric',
       minute: '2-digit',
       second: '2-digit',
-      hour12: false,
+      hour12: true,
       weekday: 'long',
-    }).format(now);
+    }).format(now) + ' (local)';
   }
 
   const userContent = buildUserContent(text, timezoneSafe, nowIso, nowInTimezone);
@@ -523,7 +522,7 @@ async function parseTaskWithOpenAI(text: string, timezone?: string): Promise<Par
 
     return normalized.value;
   } finally {
-    console.info(
+    logger.info(
       `[ai.parse-task] model=${model} timezoneSafe=${timezoneSafe} textLength=${textLength} retryUsed=${retryUsed} appliedDefaultTime=${appliedDefaultTime} durationMs=${Date.now() - startedAt}`,
     );
   }

@@ -1,7 +1,17 @@
 // src/routes/tasks.ts
 import { Router } from 'express';
-import jwt from 'jsonwebtoken';
 import { prisma } from '../prisma';
+import { authenticateToken } from '../middleware/auth';
+import {
+  createSubtaskValidation,
+  createTaskValidation,
+  noQueryValidation,
+  subtaskIdParamValidation,
+  taskIdParamValidation,
+  updateSubtaskValidation,
+  updateTaskValidation,
+} from '../middleware/validation';
+import { logger } from '../utils/logger';
 
 const router = Router();
 
@@ -63,15 +73,24 @@ const serializeSubtask = (subtask: any) => ({
   updatedAt: subtask.updatedAt ? subtask.updatedAt.toISOString() : null,
 });
 
-const recomputeParentTaskStatusFromSubtasks = async (taskId: string) => {
+const recomputeParentTaskStatusFromSubtasks = async (taskId: string, userId: string) => {
+  const parentTask = await prisma.task.findFirst({
+    where: { id: taskId, userId },
+    select: { id: true },
+  });
+
+  if (!parentTask) {
+    return null;
+  }
+
   const subtasks = await prisma.subtask.findMany({
-    where: { taskId },
+    where: { taskId: parentTask.id },
     select: { status: true },
   });
 
   if (subtasks.length === 0) {
-    return prisma.task.findUnique({
-      where: { id: taskId },
+    return prisma.task.findFirst({
+      where: { id: parentTask.id, userId },
       include: { subtasks: true },
     });
   }
@@ -85,34 +104,22 @@ const recomputeParentTaskStatusFromSubtasks = async (taskId: string) => {
       ? 'IN_PROGRESS'
       : 'TODO';
 
-  return prisma.task.update({
-    where: { id: taskId },
+  await prisma.task.updateMany({
+    where: { id: parentTask.id, userId },
     data: {
       status: nextStatus,
       statusChangedAt: new Date(),
       completedAt: allCompleted ? new Date() : null,
     },
+  });
+
+  return prisma.task.findFirst({
+    where: { id: parentTask.id, userId },
     include: { subtasks: true },
   });
 };
 
-// Auth middleware
-const authenticateToken = (req: any, res: any, next: any) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
 
-  if (!token) {
-    return res.status(401).json({ error: 'Access token required' });
-  }
-
-  jwt.verify(token, process.env.JWT_SECRET!, (err: any, user: any) => {
-    if (err) {
-      return res.status(403).json({ error: 'Invalid or expired token' });
-    }
-    req.user = user;
-    next();
-  });
-};
 
 /**
  * @swagger
@@ -141,7 +148,7 @@ const authenticateToken = (req: any, res: any, next: any) => {
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.get('/tasks', authenticateToken, async (req: any, res) => {
+router.get('/tasks', authenticateToken, noQueryValidation, async (req: any, res) => {
   try {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
@@ -154,7 +161,63 @@ router.get('/tasks', authenticateToken, async (req: any, res) => {
 
     return res.json({ tasks: tasks.map(serializeTask) });
   } catch (error) {
-    console.error('Tasks error:', error);
+    logger.error('Task list retrieval failed');
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * @swagger
+ * /tasks/{id}:
+ *   get:
+ *     tags: [Tasks]
+ *     summary: Get one task for the current user
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Task ID
+ *     responses:
+ *       200:
+ *         description: Task retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 task:
+ *                   $ref: '#/components/schemas/Task'
+ *       404:
+ *         description: Task not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+router.get('/tasks/:id', authenticateToken, taskIdParamValidation, async (req: any, res) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { id } = req.params;
+
+    const task = await prisma.task.findFirst({
+      where: { id, userId },
+      include: { subtasks: true },
+    });
+
+    if (!task) {
+      // Return 404 for both missing and non-owned tasks to avoid ownership leakage.
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    return res.json({ task: serializeTask(task) });
+  } catch (error) {
+    logger.error('Task detail retrieval failed');
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -211,7 +274,7 @@ router.get('/tasks', authenticateToken, async (req: any, res) => {
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.post('/tasks', authenticateToken, async (req: any, res) => {
+router.post('/tasks', authenticateToken, createTaskValidation, async (req: any, res) => {
   try {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
@@ -240,7 +303,7 @@ router.post('/tasks', authenticateToken, async (req: any, res) => {
 
     return res.status(201).json({ task: serializeTask(task) });
   } catch (error) {
-    console.error('Create task error:', error);
+    logger.error('Task creation failed');
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -302,7 +365,7 @@ router.post('/tasks', authenticateToken, async (req: any, res) => {
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.patch('/tasks/:id', authenticateToken, async (req: any, res) => {
+router.patch('/tasks/:id', authenticateToken, updateTaskValidation, async (req: any, res) => {
   try {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
@@ -310,16 +373,12 @@ router.patch('/tasks/:id', authenticateToken, async (req: any, res) => {
     const { id } = req.params;
     const { title, description, priority, status, dueAt, completedAt } = req.body;
 
-    const existingTask = await prisma.task.findUnique({
-      where: { id },
+    const existingTask = await prisma.task.findFirst({
+      where: { id, userId },
     });
 
     if (!existingTask) {
       return res.status(404).json({ error: 'Task not found' });
-    }
-
-    if (existingTask.userId !== userId) {
-      return res.status(403).json({ error: 'You do not have permission to update this task' });
     }
 
     const updateData: any = {};
@@ -339,15 +398,23 @@ router.patch('/tasks/:id', authenticateToken, async (req: any, res) => {
     }
     if (completedAt !== undefined) updateData.completedAt = completedAt ? new Date(completedAt) : null;
 
-    const task = await prisma.task.update({
-      where: { id },
+    await prisma.task.updateMany({
+      where: { id, userId },
       data: updateData,
+    });
+
+    const task = await prisma.task.findFirst({
+      where: { id, userId },
       include: { subtasks: true },
     });
 
+    if (!task) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
     return res.json({ task: serializeTask(task) });
   } catch (error) {
-    console.error('Update task error:', error);
+    logger.error('Task update failed');
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -384,32 +451,28 @@ router.patch('/tasks/:id', authenticateToken, async (req: any, res) => {
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.delete('/tasks/:id', authenticateToken, async (req: any, res) => {
+router.delete('/tasks/:id', authenticateToken, taskIdParamValidation, async (req: any, res) => {
   try {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     const { id } = req.params;
 
-    const existingTask = await prisma.task.findUnique({
-      where: { id },
+    const existingTask = await prisma.task.findFirst({
+      where: { id, userId },
     });
 
     if (!existingTask) {
       return res.status(404).json({ error: 'Task not found' });
     }
 
-    if (existingTask.userId !== userId) {
-      return res.status(403).json({ error: 'You do not have permission to delete this task' });
-    }
-
-    await prisma.task.delete({
-      where: { id },
+    await prisma.task.deleteMany({
+      where: { id, userId },
     });
 
     return res.json({ message: 'Task deleted successfully' });
   } catch (error) {
-    console.error('Delete task error:', error);
+    logger.error('Task deletion failed');
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -462,7 +525,7 @@ router.delete('/tasks/:id', authenticateToken, async (req: any, res) => {
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.post('/tasks/:id/subtasks', authenticateToken, async (req: any, res) => {
+router.post('/tasks/:id/subtasks', authenticateToken, createSubtaskValidation, async (req: any, res) => {
   try {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
@@ -470,31 +533,28 @@ router.post('/tasks/:id/subtasks', authenticateToken, async (req: any, res) => {
     const { id } = req.params;
     const { title, description, status } = req.body;
 
-    const task = await prisma.task.findUnique({
-      where: { id },
+    const task = await prisma.task.findFirst({
+      where: { id, userId },
     });
 
     if (!task) {
       return res.status(404).json({ error: 'Task not found' });
     }
 
-    if (task.userId !== userId) {
-      return res.status(403).json({ error: 'You do not have permission to add subtasks to this task' });
-    }
-
     const subtask = await prisma.subtask.create({
       data: {
-        title,
+        title: title.trim(),
         description,
+        status: status || 'TODO',
         taskId: id,
       },
     });
 
-    await recomputeParentTaskStatusFromSubtasks(id);
+    await recomputeParentTaskStatusFromSubtasks(id, userId);
 
     return res.status(201).json({ subtask: serializeSubtask(subtask) });
   } catch (error) {
-    console.error('Create subtask error:', error);
+    logger.error('Subtask creation failed');
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -551,7 +611,7 @@ router.post('/tasks/:id/subtasks', authenticateToken, async (req: any, res) => {
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.patch('/subtasks/:id', authenticateToken, async (req: any, res) => {
+router.patch('/subtasks/:id', authenticateToken, updateSubtaskValidation, async (req: any, res) => {
   try {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
@@ -559,17 +619,18 @@ router.patch('/subtasks/:id', authenticateToken, async (req: any, res) => {
     const { id } = req.params;
     const { title, description, status, completedAt } = req.body;
 
-    const existingSubtask = await prisma.subtask.findUnique({
-      where: { id },
+    const existingSubtask = await prisma.subtask.findFirst({
+      where: {
+        id,
+        task: {
+          userId,
+        },
+      },
       include: { task: true },
     });
 
     if (!existingSubtask) {
       return res.status(404).json({ error: 'Subtask not found' });
-    }
-
-    if (existingSubtask.task.userId !== userId) {
-      return res.status(403).json({ error: 'You do not have permission to update this subtask' });
     }
 
     const updateData: any = {};
@@ -583,14 +644,14 @@ router.patch('/subtasks/:id', authenticateToken, async (req: any, res) => {
       data: updateData,
     });
 
-    const updatedTask = await recomputeParentTaskStatusFromSubtasks(existingSubtask.taskId);
+    const updatedTask = await recomputeParentTaskStatusFromSubtasks(existingSubtask.taskId, userId);
 
     return res.json({
       subtask: serializeSubtask(subtask),
       task: updatedTask ? serializeTask(updatedTask) : null,
     });
   } catch (error) {
-    console.error('Update subtask error:', error);
+    logger.error('Subtask update failed');
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -627,15 +688,20 @@ router.patch('/subtasks/:id', authenticateToken, async (req: any, res) => {
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.delete('/subtasks/:id', authenticateToken, async (req: any, res) => {
+router.delete('/subtasks/:id', authenticateToken, subtaskIdParamValidation, async (req: any, res) => {
   try {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     const { id } = req.params;
 
-    const existingSubtask = await prisma.subtask.findUnique({
-      where: { id },
+    const existingSubtask = await prisma.subtask.findFirst({
+      where: {
+        id,
+        task: {
+          userId,
+        },
+      },
       include: { task: true },
     });
 
@@ -643,19 +709,15 @@ router.delete('/subtasks/:id', authenticateToken, async (req: any, res) => {
       return res.status(404).json({ error: 'Subtask not found' });
     }
 
-    if (existingSubtask.task.userId !== userId) {
-      return res.status(403).json({ error: 'You do not have permission to delete this subtask' });
-    }
-
     await prisma.subtask.delete({
       where: { id },
     });
 
-    await recomputeParentTaskStatusFromSubtasks(existingSubtask.taskId);
+    await recomputeParentTaskStatusFromSubtasks(existingSubtask.taskId, userId);
 
     return res.json({ message: 'Subtask deleted successfully' });
   } catch (error) {
-    console.error('Delete subtask error:', error);
+    logger.error('Subtask deletion failed');
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
