@@ -116,6 +116,15 @@ DUE DATE / TIME RULES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 - Treat nowUtc/nowInTimezone as authoritative current time.
 - Resolve relative dates from provided current time and timezone only.
+
+CRITICAL — OUTPUT FORMAT FOR dueDate:
+- Always output dueDate as a NAIVE LOCAL datetime: YYYY-MM-DDTHH:mm:ss
+- NO timezone suffix. NO "Z". NO offset (e.g. no +05:00 or -05:00).
+- NEVER convert a user-stated time to UTC yourself. Output the clock time exactly as the user said it.
+  • User says "3pm" → output T15:00:00 (never T20:00:00, even if UTC offset is +5h)
+  • User says "10:30am" → output T10:30:00 (never T15:30:00, even if UTC offset is -5h)
+- The server handles UTC conversion automatically. Your only job is to capture the user's intended local time.
+
 - Preserve exact times when explicitly stated (e.g. "5:30 PM", "10 pm").
 - Consistent defaults for vague times:
   • "afternoon" -> 15:00 local time
@@ -278,5 +287,21 @@ EXAMPLES
     dueDate: null
     priority: null
     labels: null
+
+16) Input: "meeting tomorrow at 3pm" (timezone=America/Chicago, UTC-5)
+    title: "Meeting"
+    description: null
+    dueDate: tomorrow at 15:00 local time — output T15:00:00, NOT T20:00:00 (do not add UTC offset)
+    priority: null
+    labels: null
+    subtasks: null
+
+17) Input: "dentist at 10:30am on Friday" (timezone=America/New_York, UTC-4)
+    title: "Dentist"
+    description: null
+    dueDate: next Friday at 10:30 local time — output T10:30:00, NOT T14:30:00 (do not add UTC offset)
+    priority: null
+    labels: null
+    subtasks: null
     subtasks: null
 `.trim();

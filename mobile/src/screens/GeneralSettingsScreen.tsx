@@ -8,6 +8,7 @@ import {
   Platform,
   ActionSheetIOS,
   Alert,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -19,6 +20,10 @@ import { useTheme } from '../theme';
 export type DefaultPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
 
 export const DEFAULT_PRIORITY_KEY = 'prioritizeDefaultTaskPriority';
+
+const PRIVACY_POLICY_URL = 'https://irradiated-sting-81f.notion.site/Privacy-Policy-Prioritize-33f12199bee38025a25cec1da24c49e0';
+const SUPPORT_URL = 'https://irradiated-sting-81f.notion.site/Support-Prioritize-33f12199bee380279286c0da86e9800c';
+const CONTACT_EMAIL = 'contact@prioritize-app.com';
 
 const PRIORITY_LABELS: Record<DefaultPriority, string> = {
   LOW: 'Low',
@@ -88,6 +93,24 @@ export default function GeneralSettingsScreen({ navigation }: any) {
     }
   };
 
+  const openExternalUrl = async (url: string) => {
+    try {
+      const canOpen = await Linking.canOpenURL(url);
+      if (!canOpen) {
+        Alert.alert('Unavailable', 'Could not open this link right now.');
+        return;
+      }
+
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert('Unavailable', 'Could not open this link right now.');
+    }
+  };
+
+  const openContactEmail = async () => {
+    await openExternalUrl(`mailto:${CONTACT_EMAIL}`);
+  };
+
   const appVersion = Constants.expoConfig?.version ?? '1.0.0';
   const buildNumber =
     Platform.OS === 'ios'
@@ -97,38 +120,28 @@ export default function GeneralSettingsScreen({ navigation }: any) {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header */}
-      <View
-        style={[
-          styles.header,
-          { backgroundColor: colors.surface, borderBottomColor: colors.border },
-        ]}
-      >
-        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+        <TouchableOpacity style={styles.headerBtn} onPress={() => navigation.goBack()}>
           <MaterialIcons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]}>General</Text>
-        <View style={styles.backButton} />
+        <View style={styles.headerBtn} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.scroll}>
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {/* Preferences */}
         <Text style={[styles.sectionLabel, { color: colors.mutedText }]}>PREFERENCES</Text>
-        <View
-          style={[
-            styles.card,
-            { backgroundColor: colors.surface, borderColor: colors.border },
-          ]}
-        >
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <TouchableOpacity
             style={styles.settingRow}
             onPress={handlePriorityPress}
             activeOpacity={0.7}
           >
             <View style={styles.rowLeft}>
-              <View style={[styles.iconWrap, { backgroundColor: colors.background }]}>
+              <View style={[styles.iconWrap, { backgroundColor: `${colors.primary}12` }]}>
                 <MaterialIcons name="flag" size={20} color={colors.primary} />
               </View>
-              <View>
+              <View style={styles.rowTextWrap}>
                 <Text style={[styles.rowLabel, { color: colors.text }]}>Default Task Priority</Text>
                 <Text style={[styles.rowSub, { color: colors.mutedText }]}>
                   Applied when creating a new task
@@ -136,40 +149,90 @@ export default function GeneralSettingsScreen({ navigation }: any) {
               </View>
             </View>
             <View style={styles.rowRight}>
-              <Text style={[styles.rowValue, { color: colors.mutedText }]}>
+              <Text style={[styles.rowValue, { color: colors.primary }]}>
                 {PRIORITY_LABELS[defaultPriority]}
               </Text>
-              <MaterialIcons name="chevron-right" size={22} color={colors.mutedText} />
+              <MaterialIcons name="chevron-right" size={20} color={colors.mutedText} />
             </View>
           </TouchableOpacity>
         </View>
 
         {/* About */}
         <Text style={[styles.sectionLabel, { color: colors.mutedText }]}>ABOUT</Text>
-        <View
-          style={[
-            styles.card,
-            { backgroundColor: colors.surface, borderColor: colors.border },
-          ]}
-        >
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <View style={[styles.infoRow, { borderBottomColor: colors.border }]}>
-            <View style={[styles.iconWrap, { backgroundColor: colors.background }]}>
+            <View style={[styles.iconWrap, { backgroundColor: `${colors.primary}12` }]}>
               <MaterialIcons name="info-outline" size={20} color={colors.primary} />
             </View>
-            <Text style={[styles.rowLabel, { color: colors.text }]}>Version</Text>
-            <Text style={[styles.infoValue, { color: colors.mutedText }]}>
-              {appVersion} ({buildNumber})
-            </Text>
-          </View>
-          <View style={styles.infoRow}>
-            <View style={[styles.iconWrap, { backgroundColor: colors.background }]}>
-              <MaterialIcons name="verified" size={20} color={colors.primary} />
+            <View style={styles.rowTextWrap}>
+              <Text style={[styles.infoLabel, { color: colors.mutedText }]}>Version</Text>
+              <Text style={[styles.rowLabel, { color: colors.text }]}>{appVersion}</Text>
             </View>
-            <Text style={[styles.rowLabel, { color: colors.text }]}>Build</Text>
-            <Text style={[styles.infoValue, { color: colors.mutedText }]}>
-              {__DEV__ ? 'Development' : 'Production'}
+            <Text style={[styles.rowValue, { color: colors.mutedText }]}>
+              Build {buildNumber}
             </Text>
           </View>
+          {__DEV__ && (
+            <View style={styles.infoRow}>
+              <View style={[styles.iconWrap, { backgroundColor: `${colors.primary}12` }]}>
+                <MaterialIcons name="verified" size={20} color={colors.primary} />
+              </View>
+              <View style={styles.rowTextWrap}>
+                <Text style={[styles.infoLabel, { color: colors.mutedText }]}>Build Type</Text>
+                <Text style={[styles.rowLabel, { color: colors.text }]}>Development</Text>
+              </View>
+            </View>
+          )}
+        </View>
+
+        <Text style={[styles.sectionLabel, { color: colors.mutedText }]}>SUPPORT & LEGAL</Text>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
+          <TouchableOpacity
+            style={[styles.settingRow, styles.separatorRow, { borderBottomColor: colors.border }]}
+            onPress={() => void openExternalUrl(PRIVACY_POLICY_URL)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.rowLeft}>
+              <View style={[styles.iconWrap, { backgroundColor: `${colors.primary}12` }]}> 
+                <MaterialIcons name="privacy-tip" size={20} color={colors.primary} />
+              </View>
+              <View style={styles.rowTextWrap}>
+                <Text style={[styles.rowLabel, { color: colors.text }]}>Privacy Policy</Text>
+                <Text style={[styles.rowSub, { color: colors.mutedText }]}>View how your data is handled</Text>
+              </View>
+            </View>
+            <MaterialIcons name="open-in-new" size={18} color={colors.mutedText} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.settingRow, styles.separatorRow, { borderBottomColor: colors.border }]}
+            onPress={() => void openExternalUrl(SUPPORT_URL)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.rowLeft}>
+              <View style={[styles.iconWrap, { backgroundColor: `${colors.primary}12` }]}> 
+                <MaterialIcons name="support-agent" size={20} color={colors.primary} />
+              </View>
+              <View style={styles.rowTextWrap}>
+                <Text style={[styles.rowLabel, { color: colors.text }]}>Support</Text>
+                <Text style={[styles.rowSub, { color: colors.mutedText }]}>Help center and troubleshooting</Text>
+              </View>
+            </View>
+            <MaterialIcons name="open-in-new" size={18} color={colors.mutedText} />
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.settingRow} onPress={() => void openContactEmail()} activeOpacity={0.7}>
+            <View style={styles.rowLeft}>
+              <View style={[styles.iconWrap, { backgroundColor: `${colors.primary}12` }]}> 
+                <MaterialIcons name="alternate-email" size={20} color={colors.primary} />
+              </View>
+              <View style={styles.rowTextWrap}>
+                <Text style={[styles.rowLabel, { color: colors.text }]}>Contact Email</Text>
+                <Text style={[styles.rowSub, { color: colors.mutedText }]}>{CONTACT_EMAIL}</Text>
+              </View>
+            </View>
+            <MaterialIcons name="email" size={18} color={colors.mutedText} />
+          </TouchableOpacity>
         </View>
 
         <View style={{ height: 40 }} />
@@ -187,38 +250,40 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  backButton: {
+  headerBtn: {
     width: 40,
-    padding: 4,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerTitle: {
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: '700',
   },
   scroll: {
-    paddingTop: 24,
+    paddingTop: 20,
     paddingHorizontal: 16,
     paddingBottom: 20,
   },
   sectionLabel: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
-    letterSpacing: 0.6,
+    letterSpacing: 1,
     marginBottom: 8,
     marginLeft: 4,
   },
   card: {
-    borderRadius: 12,
+    borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
-    marginBottom: 28,
+    marginBottom: 24,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
     elevation: 2,
   },
   settingRow: {
@@ -226,48 +291,55 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingVertical: 14,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
+  },
+  separatorRow: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   rowLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
+    gap: 12,
+  },
+  rowTextWrap: {
+    flex: 1,
   },
   rowRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 2,
   },
   iconWrap: {
-    width: 34,
-    height: 34,
-    borderRadius: 8,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
   },
   rowLabel: {
     fontSize: 15,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   rowSub: {
     fontSize: 12,
     marginTop: 1,
   },
+  infoLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 1,
+  },
   rowValue: {
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   infoRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  infoValue: {
-    fontSize: 14,
-    fontWeight: '500',
-    marginLeft: 'auto',
+    gap: 12,
   },
 });

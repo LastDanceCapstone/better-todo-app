@@ -1,108 +1,141 @@
-import React, { useEffect, useRef } from 'react';
-import { Animated, StyleSheet, View, Dimensions } from 'react-native';
+import React, { useEffect } from 'react';
+import { View, StyleSheet, useWindowDimensions } from 'react-native';
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+  interpolate,
+  Extrapolate,
+} from 'react-native-reanimated';
 
-const { width, height } = Dimensions.get('window');
-const COLORS = ['#FF6B6B', '#FFD93D', '#6BCB77', '#4D96FF', '#FF6FCF', '#C77DFF'];
-const NUM_PIECES = 30;
+interface Confetto {
+  id: number;
+  left: number;
+  delay: number;
+  duration: number;
+  rotation: number;
+}
 
-type ConfettiPiece = {
-  x: Animated.Value;
-  y: Animated.Value;
-  rotate: Animated.Value;
-  opacity: Animated.Value;
-  color: string;
-  size: number;
+const generateConfetti = (count: number = 30): Confetto[] => {
+  return Array.from({ length: count }, (_, i) => ({
+    id: i,
+    left: Math.random() * 100,
+    delay: Math.random() * 100,
+    duration: 2000 + Math.random() * 1000,
+    rotation: Math.random() * 360,
+  }));
 };
 
-type Props = {
-  visible: boolean;
-  onDone?: () => void;
-};
-
-export default function Confetti({ visible, onDone }: Props) {
-  const pieces = useRef<ConfettiPiece[]>(
-    Array.from({ length: NUM_PIECES }, () => ({
-      x: new Animated.Value(Math.random() * width),
-      y: new Animated.Value(-20),
-      rotate: new Animated.Value(0),
-      opacity: new Animated.Value(1),
-      color: COLORS[Math.floor(Math.random() * COLORS.length)],
-      size: Math.random() * 10 + 6,
-    }))
-  ).current;
+const ConfettoPiece = ({ confetto }: { confetto: Confetto }) => {
+  const { height } = useWindowDimensions();
+  const progress = useSharedValue(0);
 
   useEffect(() => {
-    if (!visible) return;
-
-    // Reset all pieces
-    pieces.forEach((p) => {
-      p.x.setValue(Math.random() * width);
-      p.y.setValue(-20);
-      p.rotate.setValue(0);
-      p.opacity.setValue(1);
+    progress.value = withTiming(1, {
+      duration: confetto.duration,
+      easing: Easing.bezier(0.25, 0.46, 0.45, 0.94),
     });
+  }, []);
 
-    const animations = pieces.map((p) =>
-      Animated.parallel([
-        Animated.timing(p.y, {
-          toValue: height + 20,
-          duration: 2000 + Math.random() * 1000,
-          useNativeDriver: true,
-        }),
-        Animated.timing(p.x, {
-          toValue: p.x._value + (Math.random() - 0.5) * 200,
-          duration: 2000 + Math.random() * 1000,
-          useNativeDriver: true,
-        }),
-        Animated.timing(p.rotate, {
-          toValue: Math.random() * 10,
-          duration: 2000 + Math.random() * 1000,
-          useNativeDriver: true,
-        }),
-        Animated.sequence([
-          Animated.delay(1500),
-          Animated.timing(p.opacity, {
-            toValue: 0,
-            duration: 500,
-            useNativeDriver: true,
-          }),
-        ]),
-      ])
+  const animatedStyle = useAnimatedStyle(() => {
+    const translateY = interpolate(
+      progress.value,
+      [0, 1],
+      [0, height],
+      Extrapolate.CLAMP
     );
 
-    Animated.parallel(animations).start(() => {
-      onDone?.();
-    });
-  }, [visible]);
+    const opacity = interpolate(
+      progress.value,
+      [0, 0.7, 1],
+      [1, 1, 0],
+      Extrapolate.CLAMP
+    );
 
-  if (!visible) return null;
+    const rotate = interpolate(
+      progress.value,
+      [0, 1],
+      [0, confetto.rotation * 2],
+      Extrapolate.CLAMP
+    );
+
+    return {
+      transform: [
+        { translateY },
+        { rotate: `${rotate}deg` },
+        { translateX: Math.sin(progress.value * Math.PI * 4) * 30 },
+      ],
+      opacity,
+    };
+  });
 
   return (
-    <View style={StyleSheet.absoluteFill} pointerEvents="none">
-      {pieces.map((p, i) => {
-        const spin = p.rotate.interpolate({
-          inputRange: [0, 10],
-          outputRange: ['0deg', '3600deg'],
-        });
-        return (
-          <Animated.View
-            key={i}
-            style={{
-              position: 'absolute',
-              width: p.size,
-              height: p.size,
-              backgroundColor: p.color,
-              borderRadius: Math.random() > 0.5 ? p.size / 2 : 2,
-              transform: [
-                { translateX: p.x },
-                { translateY: p.y },
-                { rotate: spin },
-              ],
-              opacity: p.opacity,
-            }}
-          />
-        );
-      })}
+    <Animated.View
+      style={[
+        {
+          position: 'absolute',
+          width: 8,
+          height: 8,
+          borderRadius: 4,
+          left: `${confetto.left}%`,
+          top: -10,
+          marginLeft: 0,
+          backgroundColor: [
+            '#DD5789',
+            '#ED995A',
+            '#2B44E7',
+            '#FF6B6B',
+            '#4ECDC4',
+          ][Math.floor(Math.random() * 5)],
+        },
+        animatedStyle,
+      ]}
+    />
+  );
+};
+
+interface ConfettiProps {
+  isVisible: boolean;
+  count?: number;
+  onComplete?: () => void;
+}
+
+export const Confetti = ({
+  isVisible,
+  count = 30,
+  onComplete,
+}: ConfettiProps) => {
+  const [confetti, setConfetti] = React.useState<Confetto[]>([]);
+
+  useEffect(() => {
+    if (isVisible) {
+      setConfetti(generateConfetti(count));
+      const timer = setTimeout(() => {
+        onComplete?.();
+      }, 3500);
+      return () => clearTimeout(timer);
+    }
+    setConfetti([]);
+  }, [isVisible, count, onComplete]);
+
+  if (!isVisible || confetti.length === 0) {
+    return null;
+  }
+
+  return (
+    <View style={styles.container} pointerEvents="none">
+      {confetti.map((c) => (
+        <ConfettoPiece key={c.id} confetto={c} />
+      ))}
     </View>
   );
-}
+};
+
+const styles = StyleSheet.create({
+  container: {
+    ...StyleSheet.absoluteFillObject,
+    overflow: 'hidden',
+    zIndex: 999,
+  },
+});

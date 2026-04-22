@@ -12,14 +12,19 @@ import {
   View,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
+import * as Notifications from 'expo-notifications';
 import { useTheme } from '../theme';
 import ScreenWrapper from '../components/ScreenWrapper';
 import {
+  ApiError,
+  getTaskById,
   getNotifications,
   markNotificationAsRead,
   Notification,
   NotificationType,
 } from '../config/api';
+import { logger } from '../utils/logger';
+import { handleUnauthorizedIfNeeded } from '../auth/unauthorizedHandler';
 
 // ---------------------------------------------------------------------------
 // Utilities
@@ -63,29 +68,6 @@ function getNotificationIcon(type: NotificationType): keyof typeof MaterialIcons
       return 'warning';
     default:
       return 'notifications';
-  }
-}
-
-/**
- * Maps a notification to a navigation action.
- * Returns null if the notification has no specific navigation destination.
- *
- * TODO: When the backend exposes a taskId on task-related notifications,
- * resolve the task and navigate to TaskDetails with it here.
- */
-function resolveNotificationNav(
-  notification: Notification,
-  navigation: any,
-): (() => void) | null {
-  switch (notification.type) {
-    case 'TASK_DUE_SOON':
-    case 'TASK_OVERDUE':
-      // Navigate to Home (task list) as a best-effort destination until taskId is available.
-      return () => navigation.navigate('Main');
-    case 'MORNING_OVERVIEW':
-    case 'EVENING_REVIEW':
-    default:
-      return null;
   }
 }
 
@@ -182,20 +164,32 @@ function NotificationCard({ notification, onPress, onMarkRead, colors }: Notific
 // NotificationCenterScreen
 // ---------------------------------------------------------------------------
 
-export default function NotificationCenterScreen({ navigation }: any) {
+export default function NotificationCenterScreen({ navigation, onSessionExpired }: any) {
   const { colors } = useTheme();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const toSortedNotifications = (items: Notification[]): Notification[] => {
+    return [...items].sort((a, b) => {
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+  };
 
   const fetchNotifications = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
       const data = await getNotifications();
-      setNotifications(data);
+      setNotifications(toSortedNotifications(data));
+      setError(null);
     } catch (err) {
-      console.error('Failed to fetch notifications:', err);
-      Alert.alert('Error', 'Failed to load notifications. Please try again.');
+      if (await handleUnauthorizedIfNeeded({ error: err, source: 'NotificationCenter.fetchNotifications', onSessionExpired })) {
+        return;
+      }
+
+      logger.warn('Failed to fetch notifications');
+      setError('Failed to load notifications. Please try again.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -214,6 +208,20 @@ export default function NotificationCenterScreen({ navigation }: any) {
     });
     return unsubscribe;
   }, [navigation, fetchNotifications]);
+
+  useEffect(() => {
+    if (typeof Notifications.addNotificationReceivedListener !== 'function') {
+      return;
+    }
+
+    const subscription = Notifications.addNotificationReceivedListener(() => {
+      void fetchNotifications(true);
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [fetchNotifications]);
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
@@ -234,7 +242,11 @@ export default function NotificationCenterScreen({ navigation }: any) {
       try {
         await markNotificationAsRead(notification.id);
       } catch (err) {
-        console.error('Failed to mark notification as read:', err);
+        if (await handleUnauthorizedIfNeeded({ error: err, source: 'NotificationCenter.handleMarkRead', onSessionExpired })) {
+          return;
+        }
+
+        logger.warn('Failed to mark notification as read');
         // Revert on failure
         setNotifications((prev) =>
           prev.map((n) =>
@@ -252,10 +264,32 @@ export default function NotificationCenterScreen({ navigation }: any) {
       if (!notification.isRead) {
         await handleMarkRead(notification);
       }
-      const nav = resolveNotificationNav(notification, navigation);
-      if (nav) nav();
+
+      if (notification.taskId) {
+        try {
+          await getTaskById(notification.taskId);
+          navigation.navigate('TaskDetails', { taskId: notification.taskId });
+          return;
+        } catch (error: any) {
+          if (await handleUnauthorizedIfNeeded({ error, source: 'NotificationCenter.handlePress', onSessionExpired })) {
+            return;
+          }
+
+          if (error instanceof ApiError && error.status === 404) {
+            Alert.alert('Task unavailable', 'This task no longer exists or is no longer accessible.');
+            return;
+          }
+          logger.warn('Failed to open task from notification');
+          Alert.alert('Error', 'Could not open the linked task.');
+          return;
+        }
+      }
+
+      if (notification.type === 'TASK_DUE_SOON' || notification.type === 'TASK_OVERDUE') {
+        navigation.navigate('Main');
+      }
     },
-    [handleMarkRead, navigation],
+    [handleMarkRead, navigation, onSessionExpired],
   );
 
   const unreadCount = notifications.filter((n) => !n.isRead).length;
@@ -286,6 +320,43 @@ export default function NotificationCenterScreen({ navigation }: any) {
           <Text style={[styles.loadingText, { color: colors.mutedText }]}>
             Loading notifications…
           </Text>
+        </View>
+      </ScreenWrapper>
+    );
+  }
+
+  if (error) {
+    return (
+      <ScreenWrapper withHorizontalPadding={false}>
+        <View style={[styles.header, { borderBottomColor: colors.border }]}> 
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={styles.backButton}
+            activeOpacity={0.7}
+          >
+            <MaterialIcons name="arrow-back" size={24} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Notifications</Text>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('NotificationSettings')}
+            style={styles.backButton}
+            activeOpacity={0.7}
+          >
+            <MaterialIcons name="settings" size={22} color={colors.text} />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.centered}>
+          <MaterialIcons name="error-outline" size={44} color={colors.danger} />
+          <Text style={[styles.emptyTitle, { color: colors.text, marginTop: 10 }]}>Couldn’t load notifications</Text>
+          <Text style={[styles.emptySubtitle, { color: colors.mutedText, marginTop: 6 }]}>{error}</Text>
+          <TouchableOpacity
+            onPress={() => fetchNotifications()}
+            style={[styles.retryButton, { backgroundColor: colors.primary }]}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.retryButtonText, { color: colors.surface }]}>Retry</Text>
+          </TouchableOpacity>
         </View>
       </ScreenWrapper>
     );
@@ -514,5 +585,15 @@ const styles = StyleSheet.create({
   markReadButton: {
     fontSize: 12,
     fontWeight: '600',
+  },
+  retryButton: {
+    marginTop: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  retryButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
   },
 });

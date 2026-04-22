@@ -2,6 +2,8 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { Appearance } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DarkTheme, DefaultTheme, Theme } from '@react-navigation/native';
+import { useTheme as useNavigationTheme } from '@react-navigation/native';
+import { logger } from '../utils/logger';
 
 export type ThemePreference = 'light' | 'dark' | 'system';
 export type ThemeVariant = 'light' | 'dark';
@@ -38,7 +40,7 @@ const lightColors: AppColors = {
   text: '#111827',
   mutedText: '#6B7280',
   border: '#E5E7EB',
-  primary: '#2563EB',
+  primary: '#004AAD',
   danger: '#FF4D4D',
   success: '#22C55E',
   notification: '#FF4D4D',
@@ -51,7 +53,7 @@ const darkColors: AppColors = {
   text: '#F9FAFB',
   mutedText: '#94A3B8',
   border: '#1F2937',
-  primary: '#60A5FA',
+  primary: '#004AAD',
   danger: '#F87171',
   success: '#34D399',
   notification: '#F87171',
@@ -73,9 +75,14 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
   const [systemTheme, setSystemTheme] = useState<ThemeVariant>(resolveSystem());
 
   useEffect(() => {
-    AsyncStorage.getItem(THEME_KEY).then((stored) => {
-      if (stored === 'light' || stored === 'dark' || stored === 'system') {
-        setPrefState(stored);
+    const loadPreference = async () => {
+      try {
+        const stored = await AsyncStorage.getItem(THEME_PREFERENCE_KEY);
+        if (stored === 'light' || stored === 'dark' || stored === 'system') {
+          setThemePreferenceState(stored);
+        }
+      } catch (error) {
+        logger.warn('Failed to load theme preference');
       }
     });
   }, []);
@@ -87,9 +94,11 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
     return () => sub.remove();
   }, []);
 
-  const setThemePreference = useCallback((next: ThemePreference) => {
-    setPrefState(next);
-    AsyncStorage.setItem(THEME_KEY, next);
+  const setThemePreference = useCallback((nextPreference: ThemePreference) => {
+    setThemePreferenceState(nextPreference);
+    AsyncStorage.setItem(THEME_PREFERENCE_KEY, nextPreference).catch((error) =>
+      logger.warn('Failed to save theme preference')
+    );
   }, []);
 
   const currentTheme: ThemeVariant = pref === 'system' ? systemTheme : pref;

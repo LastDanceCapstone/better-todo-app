@@ -1,24 +1,187 @@
 import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
+  ActivityIndicator,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
+  StyleSheet,
+  TouchableOpacity,
+  Text,
+  TextInput,
+  useWindowDimensions,
+  View,
   Alert
 } from 'react-native';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useTheme } from '../theme';
-import { API_BASE_URL } from '../config/api';
-import { getGoogleErrorMessage, signInWithGoogle } from '../config/googleSignIn';
-import AppButton from '../components/AppButton';
-import AppInput from '../components/AppInput';
-import ScreenWrapper from '../components/ScreenWrapper';
-import GlassCard from '../components/GlassCard';
+import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from 'react-native-svg';
+import { ApiError, API_BASE_URL, getUserFriendlyErrorMessage, saveAuthToken } from '../config/api';
+import { useTheme, useThemePreference } from '../theme';
+import { getGoogleErrorMessage, getGoogleSignInConfigurationIssue, signInWithGoogle } from '../config/googleSignIn';
+import { getAppleErrorMessage, isAppleAuthenticationAvailable, signInWithApple, AppleSignInCancelledError } from '../config/appleSignIn';
+import { logger } from '../utils/logger';
 
-export default function LoginScreen({ navigation }: any) {
+type Palette = {
+  background: readonly [string, string];
+  logoTagline: string;
+  inputBackground: string;
+  inputBorder: string;
+  inputText: string;
+  placeholder: string;
+  inputShadow: string;
+  primaryButton: readonly [string, string];
+  helperText: string;
+  secondaryBar: string;
+  secondaryBorder: string;
+  secondaryText: string;
+};
+
+const lightPalette: Palette = {
+  background: ['#FFFFFF', '#BDD0FF'],
+  logoTagline: '#121826',
+  inputBackground: 'rgba(255,255,255,0.72)',
+  inputBorder: 'rgba(17,24,39,0.08)',
+  inputText: '#111827',
+  placeholder: 'rgba(17,24,39,0.52)',
+  inputShadow: '#0B1221',
+  primaryButton: ['#2B44E7', '#111427'],
+  helperText: '#0F172A',
+  secondaryBar: 'rgba(255,255,255,0.66)',
+  secondaryBorder: 'rgba(17,24,39,0.08)',
+  secondaryText: '#0F172A',
+};
+
+const darkPalette: Palette = {
+  background: ['#000000', '#3533CD'],
+  logoTagline: '#F8FAFC',
+  inputBackground: 'rgba(255,255,255,0.16)',
+  inputBorder: 'rgba(255,255,255,0.24)',
+  inputText: '#F8FAFC',
+  placeholder: 'rgba(248,250,252,0.70)',
+  inputShadow: '#000000',
+  primaryButton: ['rgba(221, 87, 137, 0.9)', 'rgba(238, 154, 90, 0.9)'],
+  helperText: '#F8FAFC',
+  secondaryBar: 'rgba(255,255,255,0.20)',
+  secondaryBorder: 'rgba(255,255,255,0.24)',
+  secondaryText: '#F8FAFC',
+};
+
+type AuthInputProps = {
+  value: string;
+  onChangeText: (text: string) => void;
+  placeholder: string;
+  secureTextEntry?: boolean;
+  autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
+  keyboardType?: 'default' | 'email-address';
+  rightIcon?: React.ReactNode;
+  palette: Palette;
+  compact?: boolean;
+};
+
+const GradientLayer = ({
+  start,
+  end,
+  top,
+  bottom,
+}: {
+  start: { x: string; y: string };
+  end: { x: string; y: string };
+  top: string;
+  bottom: string;
+}) => {
+  return (
+    <Svg width="100%" height="100%" style={StyleSheet.absoluteFillObject} pointerEvents="none">
+      <Defs>
+        <SvgLinearGradient id="authGradient" x1={start.x} y1={start.y} x2={end.x} y2={end.y}>
+          <Stop offset="0" stopColor={top} />
+          <Stop offset="1" stopColor={bottom} />
+        </SvgLinearGradient>
+      </Defs>
+      <Rect x="0" y="0" width="100%" height="100%" fill="url(#authGradient)" />
+    </Svg>
+  );
+};
+
+const ButtonGradientFill = ({ top, bottom }: { top: string; bottom: string }) => (
+  <Svg width="100%" height="100%" style={StyleSheet.absoluteFillObject} pointerEvents="none">
+    <Defs>
+      <SvgLinearGradient id="authButtonGradient" x1="0" y1="0.5" x2="1" y2="0.5">
+        <Stop offset="0" stopColor={top} />
+        <Stop offset="1" stopColor={bottom} />
+      </SvgLinearGradient>
+    </Defs>
+    <Rect x="0" y="0" width="100%" height="100%" fill="url(#authButtonGradient)" />
+  </Svg>
+);
+
+const DarkButtonGradientFill = () => (
+  <Svg width="100%" height="100%" style={StyleSheet.absoluteFillObject} pointerEvents="none">
+    <Defs>
+      <SvgLinearGradient id="darkButtonGradient" x1="0" y1="0.5" x2="1" y2="0.5">
+        <Stop offset="0" stopColor="rgba(238, 154, 90, 0.9)" />
+        <Stop offset="1" stopColor="rgba(221, 87, 137, 0.9)" />
+      </SvgLinearGradient>
+    </Defs>
+    <Rect x="0" y="0" width="100%" height="100%" fill="url(#darkButtonGradient)" />
+  </Svg>
+);
+
+const AuthInput = ({
+  value,
+  onChangeText,
+  placeholder,
+  secureTextEntry,
+  autoCapitalize = 'none',
+  keyboardType = 'default',
+  rightIcon,
+  palette,
+  compact = false,
+}: AuthInputProps) => {
+  return (
+    <TouchableOpacity
+      activeOpacity={1}
+      style={[
+        styles.inputShell,
+        {
+          backgroundColor: palette.inputBackground,
+          borderColor: palette.inputBorder,
+          shadowColor: palette.inputShadow,
+          height: compact ? 48 : 52,
+        },
+      ]}
+    >
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor={palette.placeholder}
+        secureTextEntry={secureTextEntry}
+        autoCapitalize={autoCapitalize}
+        keyboardType={keyboardType}
+        autoCorrect={false}
+        style={[styles.input, { color: palette.inputText }]}
+      />
+      {rightIcon ? <View style={styles.inputRightIcon}>{rightIcon}</View> : null}
+    </TouchableOpacity>
+  );
+};
+
+type LoginScreenProps = {
+  navigation: any;
+  route?: any;
+  onAuthSuccess?: (user?: any) => void | Promise<void>;
+};
+
+export default function LoginScreen({ navigation, route, onAuthSuccess }: LoginScreenProps) {
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  const { currentTheme, setThemePreference } = useThemePreference();
+  const { width } = useWindowDimensions();
+  const isDark = currentTheme === 'dark';
+  const palette = isDark ? darkPalette : lightPalette;
   const [isLogin, setIsLogin] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
@@ -30,11 +193,49 @@ export default function LoginScreen({ navigation }: any) {
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
-  const isAuthBusy = isSubmitting || isGoogleSubmitting;
+  const [isAppleSubmitting, setIsAppleSubmitting] = useState(false);
+  const [appleAvailable, setAppleAvailable] = useState<boolean | null>(null);
+  const isAuthBusy = isSubmitting || isGoogleSubmitting || isAppleSubmitting;
+  const googleConfigIssue = getGoogleSignInConfigurationIssue();
+
+  React.useEffect(() => {
+    const prefilledEmail = typeof route?.params?.email === 'string'
+      ? route.params.email.trim().toLowerCase()
+      : '';
+    const postResetMessage = typeof route?.params?.postResetMessage === 'string'
+      ? route.params.postResetMessage.trim()
+      : '';
+
+    if (prefilledEmail) {
+      setFormData((prev) => ({ ...prev, email: prefilledEmail }));
+    }
+
+    if (postResetMessage) {
+      Alert.alert('Password Updated', postResetMessage);
+      navigation.setParams?.({ postResetMessage: undefined });
+    }
+  }, [navigation, route?.params?.email, route?.params?.postResetMessage]);
+
+  React.useEffect(() => {
+    // Check if Apple authentication is available on this device
+    isAppleAuthenticationAvailable()
+      .then(setAppleAvailable)
+      .catch(() => setAppleAvailable(false));
+  }, []);
 
   const completeAuthSuccess = async (data: any, successMessage: string) => {
-    await AsyncStorage.setItem('authToken', data.token);
+    await saveAuthToken(data.token);
     await AsyncStorage.setItem('user', JSON.stringify(data.user));
+    if (data.user?.avatarUrl) {
+      await AsyncStorage.setItem('userAvatar', data.user.avatarUrl);
+    } else {
+      await AsyncStorage.removeItem('userAvatar');
+    }
+
+    if (onAuthSuccess) {
+      await onAuthSuccess(data.user);
+      return;
+    }
 
     Alert.alert('Success', successMessage, [
       {
@@ -44,7 +245,6 @@ export default function LoginScreen({ navigation }: any) {
             screen: 'Home',
             params: {
               email: data.user?.email,
-              token: data.token,
               user: data.user,
             },
           }),
@@ -57,6 +257,20 @@ export default function LoginScreen({ navigation }: any) {
     return re.test(email);
   };
 
+  const performTimedRequest = async (url: string, options: RequestInit, timeoutMs = 15000): Promise<Response> => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  };
+
   const handleForgotPassword = async () => {
     const email = formData.email.trim();
 
@@ -66,7 +280,7 @@ export default function LoginScreen({ navigation }: any) {
     }
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/forgot-password`, {
+      const response = await performTimedRequest(`${API_BASE_URL}/api/forgot-password`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -79,46 +293,31 @@ export default function LoginScreen({ navigation }: any) {
       const payload = isJson ? await response.json() : await response.text();
 
       if (!response.ok) {
-        if (response.status === 404) {
-          Alert.alert(
-            'Reset Endpoint Not Deployed',
-            'The backend at this URL does not have /api/forgot-password yet. You can continue to Reset Password and use a token from backend console.',
-            [
-              {
-                text: 'Continue',
-                onPress: () => navigation.navigate('ResetPassword', { email }),
-              },
-              { text: 'Cancel', style: 'cancel' },
-            ]
-          );
-          return;
-        }
-
-        const errorMessage =
-          isJson && payload?.error
+        const apiMessage =
+          isJson && typeof payload?.error === 'string'
             ? payload.error
-            : `Failed to request reset token (Status ${response.status})`;
+            : isJson && typeof payload?.message === 'string'
+            ? payload.message
+            : 'Unable to send reset email right now.';
 
-        Alert.alert('Error', errorMessage);
+        throw new ApiError(apiMessage, response.status);
         return;
       }
 
       Alert.alert(
-        'Success',
-        'Check your email or backend console for the reset token',
+        'Reset Sent',
+        'Check your email for the reset code and link.',
         [
           {
-            text: 'OK',
+            text: 'Open Reset Screen',
             onPress: () => navigation.navigate('ResetPassword', { email }),
           },
         ]
       );
-    } catch (error: any) {
+    } catch (error: unknown) {
       Alert.alert(
-        'Error',
-        error.message?.includes('Network')
-          ? 'Failed to connect. Please check your internet and try again.'
-          : 'Failed to request reset token'
+        'Unable to Send Reset Email',
+        getUserFriendlyErrorMessage(error, 'Unable to send reset email right now.')
       );
     }
   };
@@ -134,8 +333,8 @@ export default function LoginScreen({ navigation }: any) {
       return;
     }
 
-    if (!formData.password || formData.password.length < 6) {
-      Alert.alert('Error', 'Password must be at least 6 characters');
+    if (!formData.password || formData.password.length < 8) {
+      Alert.alert('Error', 'Password must be at least 8 characters');
       return;
     }
 
@@ -166,64 +365,74 @@ export default function LoginScreen({ navigation }: any) {
             password: formData.password
           };
 
-      console.log('Making request to:', `${API_BASE_URL}${endpoint}`);
-      console.log('Payload:', payload);
-
-      // Add timeout and better error handling
       const controller = new AbortController();
       const timeoutId = setTimeout(() => {
-        console.log('Request timeout - aborting');
         controller.abort();
       }, 15000); // 15 second timeout
 
-      console.log('About to make fetch request...');
+      const response = await (async () => {
+        try {
+          return await fetch(`${API_BASE_URL}${endpoint}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      })();
 
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
+      const rawText = await response.text();
+      let data: any = null;
+      try {
+        data = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        data = null;
+      }
 
-      clearTimeout(timeoutId);
-
-      console.log('Response received!');
-      console.log('Response status:', response.status);
-      console.log('Response ok:', response.ok);
-
-      const data = await response.json();
-      console.log('Response data:', data);
-
-      if (response.ok) {
+      if (!isLogin && response.status === 202 && data?.requiresEmailVerification) {
+        Alert.alert('Verify Your Email', 'We sent a verification code to your email. Enter it to finish signup.', [
+          {
+            text: 'Continue',
+            onPress: () => navigation.navigate('VerifyEmail', { email: data?.email || formData.email.trim().toLowerCase() }),
+          },
+        ]);
+      } else if (response.ok) {
         await completeAuthSuccess(data, isLogin ? 'Login successful!' : 'Registration successful!');
-      } else {
-        Alert.alert('Error', data.error || 'Something went wrong');
-      }
-    } catch (error: any) {
-      console.error('Network error details:', error);
-      console.error('Error name:', error.name);
-      console.error('Error message:', error.message);
-      
-      if (error.name === 'AbortError') {
+      } else if (response.status === 403 && data?.code === 'EMAIL_NOT_VERIFIED') {
         Alert.alert(
-          'Timeout Error',
-          'Request timed out after 15 seconds. This usually means:\n\n1. Backend server is not running\n2. Wrong IP address\n3. Firewall is blocking the connection'
-        );
-      } else if (error.message.includes('Network request failed')) {
-        Alert.alert(
-          'Connection Error',
-          `Cannot connect to server at ${API_BASE_URL}\n\nPlease check:\n\n1. Backend is running on port 3000\n2. You\'re on the same WiFi network\n3. Windows Firewall allows port 3000\n4. IP address is correct (${API_BASE_URL})`
-        );
-      } else if (error.message.includes('fetch')) {
-        Alert.alert(
-          'Network Error',
-          `Fetch failed: ${error.message}\n\nThis usually indicates a connectivity issue.`
+          'Email Not Verified',
+          'Verify your email before signing in.',
+          [
+            {
+              text: 'Verify Now',
+              onPress: () => navigation.navigate('VerifyEmail', { email: data?.email || formData.email.trim().toLowerCase() }),
+            },
+            { text: 'Cancel', style: 'cancel' },
+          ]
         );
       } else {
-        Alert.alert('Error', `Unexpected error: ${error.message}`);
+        const apiMessage =
+          (typeof data?.error === 'string' && data.error) ||
+          (typeof data?.message === 'string' && data.message) ||
+          'Unable to complete your request right now.';
+
+        logger.warn(`Authentication failed: HTTP ${response.status}`);
+        throw new ApiError(apiMessage, response.status, data?.code);
       }
+    } catch (error: unknown) {
+      logger.warn('Authentication request failed');
+
+      Alert.alert(
+        isLogin ? 'Sign-In Failed' : 'Sign-Up Failed',
+        getUserFriendlyErrorMessage(
+          error,
+          isLogin ? 'Unable to sign in right now. Please try again.' : 'Unable to create your account right now. Please try again.'
+        )
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -234,6 +443,11 @@ export default function LoginScreen({ navigation }: any) {
       return;
     }
 
+    if (googleConfigIssue) {
+      Alert.alert('Google Sign-In Unavailable', googleConfigIssue);
+      return;
+    }
+
     setIsGoogleSubmitting(true);
 
     try {
@@ -241,16 +455,13 @@ export default function LoginScreen({ navigation }: any) {
       // redirect URI failures and ensure stable token retrieval in dev builds.
       const { idToken } = await signInWithGoogle();
 
-      const response = await fetch(`${API_BASE_URL}/api/auth/google`, {
+      const response = await performTimedRequest(`${API_BASE_URL}/api/auth/google`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ idToken }),
       });
-
-      console.log('[Google Auth] status:', response.status);
-      console.log('[Google Auth] content-type:', response.headers.get('content-type'));
 
       const rawText = await response.text();
 
@@ -259,18 +470,20 @@ export default function LoginScreen({ navigation }: any) {
       try {
         data = JSON.parse(rawText);
       } catch {
-        console.error('[Google Auth] Non-JSON response received:', rawText.slice(0, 500));
+        logger.error('[Google Auth] Non-JSON response received');
         Alert.alert('Google Sign-In Failed', 'Server error. Please try again later.');
         return;
       }
 
       if (!response.ok) {
-        const message =
+        const apiMessage =
           typeof data?.error === 'string' && data.error.length > 0
             ? data.error
-            : `Unable to authenticate with Google (HTTP ${response.status}).`;
-        console.error('[Google Auth] Error response:', data);
-        Alert.alert('Google Sign-In Failed', message);
+            : typeof data?.message === 'string' && data.message.length > 0
+            ? data.message
+            : 'Unable to continue with Google right now.';
+        logger.warn('[Google Auth] Authentication failed');
+        Alert.alert('Google Sign-In Failed', getUserFriendlyErrorMessage(new ApiError(apiMessage, response.status)));
         return;
       }
 
@@ -281,147 +494,291 @@ export default function LoginScreen({ navigation }: any) {
       setIsGoogleSubmitting(false);
     }
   };
+  const handleAppleContinue = async () => {
+    if (isSubmitting || isAppleSubmitting) {
+      return;
+    }
+
+    if (!appleAvailable) {
+      Alert.alert('Apple Sign-In Unavailable', 'Apple Sign-In is not available on this device.');
+      return;
+    }
+
+    setIsAppleSubmitting(true);
+
+    try {
+      const appleResult = await signInWithApple();
+
+      const response = await performTimedRequest(`${API_BASE_URL}/api/auth/apple`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          idToken: appleResult.idToken,
+          user: appleResult.user,
+        }),
+      });
+
+      const rawText = await response.text();
+
+      let data: any = null;
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        logger.error('[Apple Auth] Non-JSON response received');
+        Alert.alert('Apple Sign-In Failed', 'Server error. Please try again later.');
+        return;
+      }
+
+      if (!response.ok) {
+        const apiMessage =
+          typeof data?.error === 'string' && data.error.length > 0
+            ? data.error
+            : typeof data?.message === 'string' && data.message.length > 0
+            ? data.message
+            : 'Unable to continue with Apple right now.';
+
+        if (data?.code === 'ACCOUNT_EXISTS') {
+          logger.warn('[Apple Auth] Account exists error');
+          Alert.alert(
+            'Account Already Exists',
+            'This email is already associated with an account. Please sign in with your password or the original sign-in method.',
+            [{ text: 'OK', style: 'cancel' }]
+          );
+          return;
+        }
+
+        logger.warn('[Apple Auth] Authentication failed');
+        Alert.alert('Apple Sign-In Failed', getUserFriendlyErrorMessage(new ApiError(apiMessage, response.status)));
+        return;
+      }
+
+      await completeAuthSuccess(data, 'Login successful!');
+    } catch (error: any) {
+      // User cancelled the Apple sheet — no error alert needed
+      if (error instanceof AppleSignInCancelledError) {
+        return;
+      }
+      Alert.alert('Apple Sign-In Failed', getAppleErrorMessage(error));
+    } finally {
+      setIsAppleSubmitting(false);
+    }
+  };
 
   return (
-    <ScreenWrapper withHorizontalPadding={false}>
-      <ScrollView
-        style={{ backgroundColor: colors.background }}
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.pageContainer}>
-          {/* Header */}
-          <View style={styles.header}>
-            <View style={[styles.logoContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
-              <MaterialIcons name="check-circle" size={42} color={colors.primary} />
-            </View>
-            <Text style={[styles.title, { color: colors.text }]}>Prioritize</Text>
-            <Text style={[styles.subtitle, { color: colors.mutedText }]}> 
-              {isLogin ? 'Welcome back. Let\'s keep your day organized.' : 'Create your account and start planning with clarity.'}
-            </Text>
+    <View style={styles.container}>
+      <GradientLayer
+        start={{ x: '0', y: '0' }}
+        end={{ x: '0', y: '1' }}
+        top={palette.background[0]}
+        bottom={palette.background[1]}
+      />
+      
+      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+          onPress={() => setThemePreference(isDark ? 'light' : 'dark')}
+          activeOpacity={0.9}
+          style={[
+            styles.themeToggle,
+            {
+              top: insets.top + 6,
+              backgroundColor: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(17,24,39,0.08)',
+              borderColor: isDark ? 'rgba(255,255,255,0.26)' : 'rgba(17,24,39,0.12)',
+            },
+          ]}
+        >
+          <MaterialIcons
+            name={isDark ? 'light-mode' : 'dark-mode'}
+            size={18}
+            color={isDark ? '#FFFFFF' : '#111827'}
+          />
+        </TouchableOpacity>
+
+        <KeyboardAvoidingView
+          style={styles.keyboardWrap}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+          <View style={styles.topSection}>
+            <Image
+              source={
+                isDark
+                  ? require('../components/logo/prioritize-dark.png')
+                  : require('../components/logo/prioritize-light.png')
+              }
+              resizeMode="contain"
+              style={[
+                styles.logo,
+                {
+                  width: Math.min(width * 1.76, 700),
+                  height: Math.min(width * 0.88, 348),
+                },
+              ]}
+            />
+            <Text style={[styles.tagline, { color: palette.logoTagline }]}>Organize your tasks, prioritize your life</Text>
           </View>
 
-          {/* Form Card */}
-          <GlassCard style={styles.card}>
-            <Text style={[styles.cardTitle, { color: colors.text }]}> 
-              {isLogin ? 'Sign In' : 'Create Account'}
-            </Text>
-            <Text style={[styles.cardSubtitle, { color: colors.mutedText }]}> 
-              {isLogin 
-                ? 'Use your account details to continue.' 
-                : 'Set up your profile to get started.'}
-            </Text>
-
-            {/* Name Fields (Registration only) */}
-            {!isLogin && (
+          <View style={styles.formSection}>
+            {!isLogin ? (
               <View style={styles.nameRow}>
                 <View style={styles.nameInput}>
-                  <AppInput
-                    label="First Name"
-                    placeholder="John"
+                  <AuthInput
                     value={formData.firstName}
-                    onChangeText={(text) => setFormData({...formData, firstName: text})}
+                    onChangeText={(text) => setFormData({ ...formData, firstName: text })}
+                    placeholder="First Name"
                     autoCapitalize="words"
-                    containerStyle={styles.authInputContainer}
+                    palette={palette}
+                    compact
                   />
                 </View>
                 <View style={styles.nameInput}>
-                  <AppInput
-                    label="Last Name"
-                    placeholder="Doe"
+                  <AuthInput
                     value={formData.lastName}
-                    onChangeText={(text) => setFormData({...formData, lastName: text})}
+                    onChangeText={(text) => setFormData({ ...formData, lastName: text })}
+                    placeholder="Last Name"
                     autoCapitalize="words"
-                    containerStyle={styles.authInputContainer}
+                    palette={palette}
+                    compact
                   />
                 </View>
               </View>
-            )}
+            ) : null}
 
-            {/* Email */}
-            <AppInput
-              label="Email"
-              placeholder="you@example.com"
+            <AuthInput
               value={formData.email}
-              onChangeText={(text) => setFormData({...formData, email: text})}
+              onChangeText={(text) => setFormData({ ...formData, email: text })}
+              placeholder="Email"
               keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-              containerStyle={styles.formGroup}
+              palette={palette}
             />
 
-            {/* Password */}
-            <View style={styles.formGroup}>
-              <AppInput
-                label="Password"
-                placeholder="••••••••"
-                value={formData.password}
-                onChangeText={(text) => setFormData({...formData, password: text})}
-                secureTextEntry={!showPassword}
-                autoCapitalize="none"
-                rightIcon={(
-                  <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
-                    <MaterialIcons
-                      name={showPassword ? 'visibility-off' : 'visibility'}
-                      size={20}
-                      color={colors.mutedText}
-                    />
-                  </TouchableOpacity>
-                )}
-                containerStyle={styles.authInputContainer}
-              />
-            </View>
+            <View style={styles.stackGap} />
 
-            {/* Confirm Password (Registration only) */}
-            {!isLogin && (
-              <AppInput
-                label="Confirm Password"
-                placeholder="••••••••"
-                value={formData.confirmPassword}
-                onChangeText={(text) => setFormData({...formData, confirmPassword: text})}
-                secureTextEntry={!showPassword}
-                autoCapitalize="none"
-                containerStyle={styles.formGroup}
-              />
-            )}
+            <AuthInput
+              value={formData.password}
+              onChangeText={(text) => setFormData({ ...formData, password: text })}
+              placeholder="Password"
+              secureTextEntry={!showPassword}
+              palette={palette}
+              rightIcon={
+                <TouchableOpacity onPress={() => setShowPassword(!showPassword)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                  <MaterialIcons
+                    name={showPassword ? 'visibility-off' : 'visibility'}
+                    size={20}
+                    color={palette.placeholder}
+                  />
+                </TouchableOpacity>
+              }
+            />
 
-            {/* Forgot Password (Login only) */}
-            {isLogin && (
-              <TouchableOpacity style={styles.forgotPassword} onPress={handleForgotPassword}>
-                <Text style={[styles.forgotPasswordText, { color: colors.primary }]}>Forgot Password?</Text>
+            {!isLogin ? (
+              <>
+                <View style={styles.stackGap} />
+                <AuthInput
+                  value={formData.confirmPassword}
+                  onChangeText={(text) => setFormData({ ...formData, confirmPassword: text })}
+                  placeholder="Confirm Password"
+                  secureTextEntry={!showPassword}
+                  palette={palette}
+                />
+              </>
+            ) : null}
+
+            {isLogin ? (
+              <TouchableOpacity style={styles.forgotRow} onPress={handleForgotPassword}>
+                <Text style={[styles.forgotText, { color: palette.helperText }]}>Forgot Password?</Text>
               </TouchableOpacity>
-            )}
+            ) : null}
 
-            {/* Submit Button */}
-            <AppButton
-              title={isLogin ? 'Sign In' : 'Create Account'}
+            <TouchableOpacity
+              activeOpacity={0.9}
               onPress={handleSubmit}
               disabled={isAuthBusy}
-              loading={isSubmitting}
-              style={styles.submitButton}
-            />
+              style={[styles.primaryButton, isAuthBusy ? styles.primaryDisabled : null]}
+            >
+              {isDark ? (
+                <View style={styles.primaryButtonFill}>
+                  <DarkButtonGradientFill />
+                  {isSubmitting ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>{isLogin ? 'Sign In' : 'Create Account'}</Text>
+                  )}
+                </View>
+              ) : (
+                <View style={styles.primaryButtonFill}>
+                  <ButtonGradientFill top={palette.primaryButton[0]} bottom={palette.primaryButton[1]} />
+                  {isSubmitting ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>{isLogin ? 'Sign In' : 'Create Account'}</Text>
+                  )}
+                </View>
+              )}
+            </TouchableOpacity>
 
-            <View style={styles.dividerRow}>
-              <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
-              <Text style={[styles.dividerText, { color: colors.mutedText }]}>or continue with</Text>
-              <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+            <View style={styles.socialDivider}>
+              <View style={[styles.socialDividerLine, { backgroundColor: palette.inputBorder }]} />
+              <Text style={[styles.socialDividerText, { color: palette.placeholder }]}>or continue with</Text>
+              <View style={[styles.socialDividerLine, { backgroundColor: palette.inputBorder }]} />
             </View>
 
-            <AppButton
-              title="Continue with Google"
-              onPress={handleGoogleContinue}
-              disabled={isAuthBusy}
-              loading={isGoogleSubmitting}
-              leftIcon={<MaterialIcons name="g-translate" size={20} color={colors.text} />}
-              variant="outline"
-              style={styles.googleButton}
-              textStyle={{ color: colors.text }}
-            />
+            <View style={styles.socialSection}>
+              <TouchableOpacity
+                activeOpacity={0.9}
+                onPress={handleGoogleContinue}
+                disabled={isAuthBusy || Boolean(googleConfigIssue)}
+                style={[
+                  styles.secondaryButton,
+                  {
+                    backgroundColor: palette.secondaryBar,
+                    borderColor: palette.secondaryBorder,
+                  },
+                  isAuthBusy || googleConfigIssue ? styles.primaryDisabled : null,
+                ]}
+              >
+                {isGoogleSubmitting ? (
+                  <ActivityIndicator color={palette.secondaryText} />
+                ) : (
+                  <>
+                    <MaterialIcons name="g-translate" size={20} color={palette.secondaryText} />
+                    <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Continue with Google</Text>
+                  </>
+                )}
+              </TouchableOpacity>
 
-            {/* Toggle Login/Register */}
+              {Platform.OS === 'ios' && appleAvailable ? (
+                <View style={[styles.appleButtonContainer, isAuthBusy ? styles.primaryDisabled : null]}>
+                  {isAppleSubmitting ? (
+                    <View style={styles.appleButtonLoadingWrap}>
+                      <ActivityIndicator color="#FFFFFF" />
+                    </View>
+                  ) : (
+                    <AppleAuthentication.AppleAuthenticationButton
+                      buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
+                      buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
+                      cornerRadius={18}
+                      style={styles.appleNativeButton}
+                      onPress={handleAppleContinue}
+                    />
+                  )}
+                </View>
+              ) : null}
+            </View>
+
+            {googleConfigIssue ? (
+              <Text style={[styles.googleConfigHint, { color: palette.helperText }]}>Google Sign-In requires EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID and EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID in environment config.</Text>
+            ) : null}
+
             <View style={styles.toggleContainer}>
-              <Text style={[styles.toggleText, { color: colors.mutedText }]}> 
+              <Text style={[styles.toggleText, { color: palette.helperText }]}> 
                 {isLogin ? "Don't have an account? " : 'Already have an account? '}
               </Text>
               <TouchableOpacity onPress={() => setIsLogin(!isLogin)}>
@@ -430,134 +787,221 @@ export default function LoginScreen({ navigation }: any) {
                 </Text>
               </TouchableOpacity>
             </View>
-          </GlassCard>
-
-          {/* Footer */}
-          <Text style={[styles.footer, { color: colors.mutedText }]}> 
-            © 2025 Last Dance Team
-          </Text>
-        </View>
-      </ScrollView>
-    </ScreenWrapper>
+          </View>
+        </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  scrollContent: {
-    flexGrow: 1,
+  container: {
+    flex: 1,
   },
-  pageContainer: {
-    paddingHorizontal: 20,
-    paddingTop: 28,
-    paddingBottom: 24,
-    minHeight: '100%',
+  safeArea: {
+    flex: 1,
+    backgroundColor: 'transparent',
   },
-  header: {
-    alignItems: 'center',
-    marginBottom: 18,
+  keyboardWrap: {
+    flex: 1,
   },
-  logoContainer: {
-    width: 74,
-    height: 74,
-    borderRadius: 22,
+  themeToggle: {
+    position: 'absolute',
+    right: 18,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 14,
     borderWidth: 1,
+    zIndex: 20,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
+    shadowOpacity: 0.14,
     shadowRadius: 8,
-    elevation: 3,
-  },
-  title: {
-    fontSize: 34,
-    fontWeight: '800',
-    marginBottom: 6,
-  },
-  subtitle: {
-    fontSize: 14,
-    textAlign: 'center',
-    lineHeight: 20,
-    maxWidth: 320,
-  },
-  card: {
-    borderRadius: 18,
-    padding: 18,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
     elevation: 4,
   },
-  cardTitle: {
-    fontSize: 24,
-    fontWeight: '800',
-    marginBottom: 6,
+  scrollContent: {
+    flexGrow: 1,
+    paddingHorizontal: 24,
+    paddingTop: 0,
+    paddingBottom: 30,
   },
-  cardSubtitle: {
+  topSection: {
+    alignItems: 'center',
+    marginTop: 0,
+    marginBottom: 10,
+  },
+  logo: {
+    marginTop: 0,
+  },
+  tagline: {
+    marginTop: 0,
+    marginBottom: 10,
     fontSize: 13,
-    marginBottom: 18,
+    fontWeight: '600',
+    textAlign: 'center',
     lineHeight: 18,
+    paddingHorizontal: 10,
+  },
+  formSection: {
+    marginTop: 4,
+  },
+  stackGap: {
+    height: 8,
   },
   nameRow: {
     flexDirection: 'row',
-    gap: 12,
-    marginBottom: 14,
+    gap: 10,
+    marginBottom: 8,
   },
   nameInput: {
     flex: 1,
   },
-  formGroup: {
-    marginBottom: 16,
+  inputShell: {
+    borderRadius: 20,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.16,
+    shadowRadius: 16,
+    elevation: 6,
   },
-  authInputContainer: {
-    marginBottom: 0,
+  input: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    paddingVertical: 0,
   },
-  forgotPassword: {
+  inputRightIcon: {
+    marginLeft: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  forgotRow: {
     alignItems: 'flex-end',
-    marginTop: -2,
-    marginBottom: 12,
+    marginTop: 6,
+    marginBottom: 8,
   },
-  forgotPasswordText: {
+  forgotText: {
     fontSize: 13,
     fontWeight: '600',
   },
-  submitButton: {
+  primaryButton: {
     marginTop: 4,
+    width: '100%',
+    height: 52,
+    borderRadius: 18,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.20,
+    shadowRadius: 16,
+    elevation: 8,
   },
-  dividerRow: {
+  primaryButtonFill: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  primaryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+    textShadowColor: 'rgba(0,0,0,0.30)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  secondaryButton: {
+    marginTop: 0,
+    minHeight: 50,
+    borderRadius: 18,
+    borderWidth: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 14,
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.10,
+    shadowRadius: 10,
+    elevation: 3,
+    gap: 8,
   },
-  dividerLine: {
-    flex: 1,
-    height: 1,
+  secondaryButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
   },
-  dividerText: {
-    marginHorizontal: 10,
+  appleButtonContainer: {
+    marginTop: 0,
+    height: 50,
+  },
+  appleNativeButton: {
+    width: '100%',
+    height: '100%',
+  },
+  appleButtonLoadingWrap: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 18,
+    backgroundColor: '#000000',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.14,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  googleConfigHint: {
+    marginTop: 8,
     fontSize: 12,
     fontWeight: '600',
+    textAlign: 'center',
+    lineHeight: 16,
   },
-  googleButton: {
-    marginTop: 12,
+  socialDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 16,
+    marginBottom: 12,
+    gap: 10,
+  },
+  socialDividerLine: {
+    flex: 1,
+    height: 1,
+    borderRadius: 1,
+  },
+  socialDividerText: {
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 0.4,
+  },
+  socialSection: {
+    gap: 8,
   },
   toggleContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
     marginTop: 18,
+    paddingHorizontal: 8,
   },
   toggleText: {
-    fontSize: 14,
+    fontSize: 13,
+    fontWeight: '500',
   },
   toggleLink: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
   },
-  footer: {
-    textAlign: 'center',
-    fontSize: 12,
-    marginTop: 18,
+  primaryDisabled: {
+    opacity: 0.6,
   },
 });

@@ -1,31 +1,74 @@
 import { prisma } from '../prisma';
 
-type TaskLite = {
+export type AnalyticsPeriod = 'day' | 'week';
+
+export type AnalyticsQueryOptions = {
+  startDate?: Date;
+  endDate?: Date;
+  period?: AnalyticsPeriod;
+};
+
+type TaskForCompletion = {
   status: string;
+  createdAt: Date;
+  dueAt: Date | null;
   completedAt: Date | null;
   statusChangedAt: Date | null;
   updatedAt: Date;
-  createdAt: Date;
 };
 
-export type ProductivityAnalytics = {
-  completion_rate: number;
-  tasks_completed_this_week: number;
-  most_productive_hour: string;
-  tasks_completed_per_day: Array<{ date: string; count: number }>;
-  productivity_trends: Array<{ date: string; completed: number; created: number }>;
-  task_categories: Array<{ category: string; count: number; completed: number }>;
-  productivity_heatmap: Array<{ day: string; hour: number; count: number }>;
+export type AnalyticsResponse = {
+  range: {
+    startDate: string;
+    endDate: string;
+    period: AnalyticsPeriod;
+  };
+  overview: {
+    totalCreated: number;
+    totalCompleted: number;
+    completionRate: number;
+  };
+  tasksByStatus: {
+    TODO: number;
+    IN_PROGRESS: number;
+    COMPLETED: number;
+    CANCELLED: number;
+  };
+  tasksByPriority: {
+    LOW: number;
+    MEDIUM: number;
+    HIGH: number;
+    URGENT: number;
+  };
+  trends: {
+    created: Array<{ periodStart: string; label: string; count: number }>;
+    completed: Array<{ periodStart: string; label: string; count: number }>;
+  };
+  productivity: {
+    avgCompletionTimeHours: number | null;
+    tasksCompletedInRange: number;
+    tasksPerPeriod: Array<{ periodStart: string; label: string; count: number }>;
+  };
+  overdue: {
+    overdueCount: number;
+    onTimeCount: number;
+    lateCount: number;
+  };
 };
 
-const ROLLING_TREND_DAYS = 14;
-const COMPLETED_PER_DAY_DAYS = 30;
-const WEEKDAY_ORDER = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DEFAULT_RANGE_DAYS = 30;
 
 const toIsoDate = (date: Date): string => date.toISOString().slice(0, 10);
 
 const startOfUtcDay = (date: Date): Date =>
   new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+
+const endOfUtcDay = (date: Date): Date => {
+  const value = startOfUtcDay(date);
+  value.setUTCDate(value.getUTCDate() + 1);
+  value.setUTCMilliseconds(-1);
+  return value;
+};
 
 const addUtcDays = (date: Date, days: number): Date => {
   const next = new Date(date);
@@ -39,143 +82,251 @@ const startOfUtcWeekMonday = (date: Date): Date => {
   return startOfUtcDay(addUtcDays(date, diff));
 };
 
-const toWeekdayLabel = (date: Date): string => {
-  const day = date.getUTCDay();
-  if (day === 0) return 'Sun';
-  if (day === 1) return 'Mon';
-  if (day === 2) return 'Tue';
-  if (day === 3) return 'Wed';
-  if (day === 4) return 'Thu';
-  if (day === 5) return 'Fri';
-  return 'Sat';
-};
+const roundToOne = (value: number): number => Math.round(value * 10) / 10;
 
-const isCompletedTask = (task: TaskLite): boolean =>
-  task.status === 'COMPLETED' || task.completedAt !== null;
-
-const completionTimestamp = (task: TaskLite): Date | null => {
+const completionTimestamp = (task: TaskForCompletion): Date | null => {
   if (task.completedAt) return task.completedAt;
   if (task.status === 'COMPLETED') return task.statusChangedAt || task.updatedAt;
   return null;
 };
 
-const roundToTwo = (value: number): number => Math.round(value * 100) / 100;
-
-export async function getProductivityAnalytics(userId: string): Promise<ProductivityAnalytics> {
-  const tasks = await prisma.task.findMany({
-    where: { userId },
-    select: {
-      status: true,
-      completedAt: true,
-      statusChangedAt: true,
-      updatedAt: true,
-      createdAt: true,
-    },
-  });
-
-  const totalTasks = tasks.length;
-  const completedTasks = tasks.filter(isCompletedTask);
-  const completionRate = totalTasks === 0 ? 0 : roundToTwo(completedTasks.length / totalTasks);
-
+const resolveDateRange = (options: AnalyticsQueryOptions): {
+  startDate: Date;
+  endDate: Date;
+  period: AnalyticsPeriod;
+} => {
+  const period = options.period || 'day';
   const now = new Date();
-  const weekStart = startOfUtcWeekMonday(now);
-  const nextWeekStart = addUtcDays(weekStart, 7);
 
-  const completedWithTimestamp = completedTasks
-    .map((task) => completionTimestamp(task))
-    .filter((timestamp): timestamp is Date => timestamp !== null);
+  const resolvedEnd = options.endDate ? endOfUtcDay(options.endDate) : endOfUtcDay(now);
+  let resolvedStart: Date;
 
-  const tasksCompletedThisWeek = completedWithTimestamp.filter(
-    (timestamp) => timestamp >= weekStart && timestamp < nextWeekStart
-  ).length;
-
-  const perDayStart = addUtcDays(startOfUtcDay(now), -(COMPLETED_PER_DAY_DAYS - 1));
-  const completedPerDayMap = new Map<string, number>();
-
-  completedWithTimestamp.forEach((timestamp) => {
-    if (timestamp < perDayStart) return;
-    const key = toIsoDate(timestamp);
-    completedPerDayMap.set(key, (completedPerDayMap.get(key) || 0) + 1);
-  });
-
-  const tasksCompletedPerDay = Array.from(completedPerDayMap.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, count]) => ({ date, count }));
-
-  const trendStart = addUtcDays(startOfUtcDay(now), -(ROLLING_TREND_DAYS - 1));
-  const createdByDate = new Map<string, number>();
-  const completedByDate = new Map<string, number>();
-
-  tasks.forEach((task) => {
-    if (task.createdAt >= trendStart) {
-      const key = toIsoDate(task.createdAt);
-      createdByDate.set(key, (createdByDate.get(key) || 0) + 1);
-    }
-
-    const completedAt = completionTimestamp(task);
-    if (completedAt && completedAt >= trendStart) {
-      const key = toIsoDate(completedAt);
-      completedByDate.set(key, (completedByDate.get(key) || 0) + 1);
-    }
-  });
-
-  const productivityTrends: Array<{ date: string; completed: number; created: number }> = [];
-  for (let i = 0; i < ROLLING_TREND_DAYS; i += 1) {
-    const day = addUtcDays(trendStart, i);
-    const key = toIsoDate(day);
-    productivityTrends.push({
-      date: key,
-      completed: completedByDate.get(key) || 0,
-      created: createdByDate.get(key) || 0,
-    });
+  if (options.startDate) {
+    resolvedStart = startOfUtcDay(options.startDate);
+  } else {
+    resolvedStart = startOfUtcDay(addUtcDays(resolvedEnd, -(DEFAULT_RANGE_DAYS - 1)));
   }
 
-  const hourCounts = new Array<number>(24).fill(0);
-  completedWithTimestamp.forEach((timestamp) => {
-    hourCounts[timestamp.getUTCHours()] += 1;
-  });
-
-  let topHour = 0;
-  let topHourCount = 0;
-  for (let hour = 0; hour < hourCounts.length; hour += 1) {
-    if (hourCounts[hour] > topHourCount) {
-      topHourCount = hourCounts[hour];
-      topHour = hour;
-    }
+  if (resolvedStart > resolvedEnd) {
+    const fallbackStart = startOfUtcDay(addUtcDays(resolvedEnd, -(DEFAULT_RANGE_DAYS - 1)));
+    return {
+      startDate: fallbackStart,
+      endDate: resolvedEnd,
+      period,
+    };
   }
-  const mostProductiveHour = `${String(topHour).padStart(2, '0')}:00`;
-
-  const completedCount = completedTasks.length;
-  const taskCategories = totalTasks === 0
-    ? []
-    : [{ category: 'Uncategorized', count: totalTasks, completed: completedCount }];
-
-  const heatmapCounter = new Map<string, number>();
-  completedWithTimestamp.forEach((timestamp) => {
-    const day = toWeekdayLabel(timestamp);
-    const hour = timestamp.getUTCHours();
-    const key = `${day}-${hour}`;
-    heatmapCounter.set(key, (heatmapCounter.get(key) || 0) + 1);
-  });
-
-  const productivityHeatmap = Array.from(heatmapCounter.entries())
-    .map(([key, count]) => {
-      const [day, hourString] = key.split('-');
-      return { day, hour: Number(hourString), count };
-    })
-    .sort((a, b) => {
-      const dayDiff = WEEKDAY_ORDER.indexOf(a.day) - WEEKDAY_ORDER.indexOf(b.day);
-      if (dayDiff !== 0) return dayDiff;
-      return a.hour - b.hour;
-    });
 
   return {
-    completion_rate: completionRate,
-    tasks_completed_this_week: tasksCompletedThisWeek,
-    most_productive_hour: mostProductiveHour,
-    tasks_completed_per_day: tasksCompletedPerDay,
-    productivity_trends: productivityTrends,
-    task_categories: taskCategories,
-    productivity_heatmap: productivityHeatmap,
+    startDate: resolvedStart,
+    endDate: resolvedEnd,
+    period,
+  };
+};
+
+const buildPeriodBuckets = (startDate: Date, endDate: Date, period: AnalyticsPeriod): Array<{ periodStart: string; label: string }> => {
+  const buckets: Array<{ periodStart: string; label: string }> = [];
+
+  if (period === 'week') {
+    let cursor = startOfUtcWeekMonday(startDate);
+    while (cursor <= endDate) {
+      const key = toIsoDate(cursor);
+      const label = `Wk of ${cursor.getUTCMonth() + 1}/${cursor.getUTCDate()}`;
+      buckets.push({ periodStart: key, label });
+      cursor = addUtcDays(cursor, 7);
+    }
+    return buckets;
+  }
+
+  let cursor = startOfUtcDay(startDate);
+  while (cursor <= endDate) {
+    const key = toIsoDate(cursor);
+    const label = `${cursor.getUTCMonth() + 1}/${cursor.getUTCDate()}`;
+    buckets.push({ periodStart: key, label });
+    cursor = addUtcDays(cursor, 1);
+  }
+
+  return buckets;
+};
+
+const bucketKeyForDate = (date: Date, period: AnalyticsPeriod): string => {
+  if (period === 'week') {
+    return toIsoDate(startOfUtcWeekMonday(date));
+  }
+  return toIsoDate(startOfUtcDay(date));
+};
+
+export async function getProductivityAnalytics(
+  userId: string,
+  options: AnalyticsQueryOptions = {}
+): Promise<AnalyticsResponse> {
+  const { startDate, endDate, period } = resolveDateRange(options);
+  const now = new Date();
+
+  const [createdTasks, completedCandidates, overdueCount] = await Promise.all([
+    prisma.task.findMany({
+      where: {
+        userId,
+        createdAt: {
+          gte: startDate,
+          lte: endDate,
+        },
+      },
+      select: {
+        status: true,
+        priority: true,
+        createdAt: true,
+      },
+    }),
+    prisma.task.findMany({
+      where: {
+        userId,
+        status: 'COMPLETED',
+        OR: [
+          {
+            completedAt: {
+              not: null,
+              gte: startDate,
+              lte: endDate,
+            },
+          },
+          {
+            completedAt: null,
+            statusChangedAt: {
+              not: null,
+              gte: startDate,
+              lte: endDate,
+            },
+          },
+          {
+            completedAt: null,
+            statusChangedAt: null,
+            updatedAt: {
+              gte: startDate,
+              lte: endDate,
+            },
+          },
+        ],
+      },
+      select: {
+        status: true,
+        createdAt: true,
+        dueAt: true,
+        completedAt: true,
+        statusChangedAt: true,
+        updatedAt: true,
+      },
+    }),
+    prisma.task.count({
+      where: {
+        userId,
+        dueAt: {
+          lt: now,
+        },
+        status: {
+          in: ['TODO', 'IN_PROGRESS'],
+        },
+      },
+    }),
+  ]);
+
+  const tasksByStatus: AnalyticsResponse['tasksByStatus'] = {
+    TODO: 0,
+    IN_PROGRESS: 0,
+    COMPLETED: 0,
+    CANCELLED: 0,
+  };
+
+  const tasksByPriority: AnalyticsResponse['tasksByPriority'] = {
+    LOW: 0,
+    MEDIUM: 0,
+    HIGH: 0,
+    URGENT: 0,
+  };
+
+  const createdCounter = new Map<string, number>();
+  createdTasks.forEach((task) => {
+    tasksByStatus[task.status] += 1;
+    tasksByPriority[task.priority] += 1;
+
+    const key = bucketKeyForDate(task.createdAt, period);
+    createdCounter.set(key, (createdCounter.get(key) || 0) + 1);
+  });
+
+  const completedCounter = new Map<string, number>();
+  let onTimeCount = 0;
+  let lateCount = 0;
+  let completionTimeTotalHours = 0;
+  let completionTimeSampleCount = 0;
+
+  completedCandidates.forEach((task) => {
+    const completedAt = completionTimestamp(task);
+    if (!completedAt) return;
+
+    const key = bucketKeyForDate(completedAt, period);
+    completedCounter.set(key, (completedCounter.get(key) || 0) + 1);
+
+    const durationMs = completedAt.getTime() - task.createdAt.getTime();
+    if (durationMs >= 0) {
+      completionTimeTotalHours += durationMs / (1000 * 60 * 60);
+      completionTimeSampleCount += 1;
+    }
+
+    if (task.dueAt) {
+      if (completedAt <= task.dueAt) {
+        onTimeCount += 1;
+      } else {
+        lateCount += 1;
+      }
+    }
+  });
+
+  const buckets = buildPeriodBuckets(startDate, endDate, period);
+  const createdTrend = buckets.map((bucket) => ({
+    periodStart: bucket.periodStart,
+    label: bucket.label,
+    count: createdCounter.get(bucket.periodStart) || 0,
+  }));
+  const completedTrend = buckets.map((bucket) => ({
+    periodStart: bucket.periodStart,
+    label: bucket.label,
+    count: completedCounter.get(bucket.periodStart) || 0,
+  }));
+
+  const totalCreated = createdTasks.length;
+  const totalCompleted = tasksByStatus.COMPLETED;
+  const completionRate = totalCreated === 0 ? 0 : roundToOne((totalCompleted / totalCreated) * 100);
+
+  const avgCompletionTimeHours =
+    completionTimeSampleCount === 0
+      ? null
+      : roundToOne(completionTimeTotalHours / completionTimeSampleCount);
+
+  return {
+    range: {
+      startDate: toIsoDate(startDate),
+      endDate: toIsoDate(endDate),
+      period,
+    },
+    overview: {
+      totalCreated,
+      totalCompleted,
+      completionRate,
+    },
+    tasksByStatus,
+    tasksByPriority,
+    trends: {
+      created: createdTrend,
+      completed: completedTrend,
+    },
+    productivity: {
+      avgCompletionTimeHours,
+      tasksCompletedInRange: completedCandidates.length,
+      tasksPerPeriod: completedTrend,
+    },
+    overdue: {
+      overdueCount,
+      onTimeCount,
+      lateCount,
+    },
   };
 }

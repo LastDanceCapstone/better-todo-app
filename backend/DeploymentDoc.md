@@ -175,8 +175,13 @@ We needed the backend to be:
    Added in Railway dashboard under Variables:
    - `DATABASE_URL` - PostgreSQL connection string
    - `JWT_SECRET` - Secret for signing JWT tokens
+   - `GOOGLE_CLIENT_ID` - Google OAuth audience used for ID token verification
+   - `OPENAI_API_KEY` - API key for AI task parsing
+   - `RESEND_API_KEY` - API key for transactional email delivery
+   - `MAIL_FROM` - Verified sender email/domain for reset emails
    - `NODE_ENV` - Set to "production"
    - `PORT` - Auto-configured by Railway (3000)
+   - `CORS_ORIGINS` - Comma-separated allow-list for browser clients (recommended in production)
 
 3. **Deployed to Railway**
 
@@ -396,10 +401,16 @@ Note: The platform flag is `ios` (not `io`).
    
    Create `.env` file in `backend/` directory:
    ```env
-   DATABASE_URL="postgresql://postgres:PASSWORD@trolley.proxy.rlwy.net:59975/railway"
-   JWT_SECRET="your-secret-key-here-change-in-production"
+   DATABASE_URL="postgresql://postgres:PASSWORD@HOST:PORT/railway"
+   JWT_SECRET="replace-with-long-random-secret"
+   GOOGLE_CLIENT_ID="your-google-web-client-id.apps.googleusercontent.com"
+   OPENAI_API_KEY="sk-..."
+   OPENAI_MODEL="gpt-4o-mini"
+   RESEND_API_KEY="re_..."
+   MAIL_FROM="Prioritize <no-reply@your-domain.com>"
    NODE_ENV="development"
    PORT=3000
+   CORS_ORIGINS=""
    ```
 
    **Get DATABASE_URL from Railway:**
@@ -741,7 +752,12 @@ Overall, the Google Authentication implementation represents more than a single 
    Make sure these are set in Railway:
    - `DATABASE_URL` 
    - `JWT_SECRET` 
+   - `GOOGLE_CLIENT_ID`
+   - `OPENAI_API_KEY`
+   - `RESEND_API_KEY`
+   - `MAIL_FROM`
    - `NODE_ENV=production` 
+   - `CORS_ORIGINS` (recommended)
 
 ### Deploy to Production
 

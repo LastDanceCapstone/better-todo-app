@@ -1,24 +1,26 @@
 import swaggerJsdoc from 'swagger-jsdoc';
 import path from 'path';
+import { env } from './config/env';
+import { logger } from './utils/logger';
 
-const DEFAULT_RAILWAY_API_URL = 'https://prioritize-production-3835.up.railway.app/api';
 const LOCAL_API_URL = 'http://localhost:3000/api';
 
 const resolveApiServerUrl = (): string => {
-  if (process.env.SWAGGER_SERVER_URL) {
-    return process.env.SWAGGER_SERVER_URL;
+  if (env.SWAGGER_SERVER_URL) {
+    return env.SWAGGER_SERVER_URL;
   }
 
-  if (process.env.RAILWAY_PUBLIC_DOMAIN) {
-    return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}/api`;
+  if (env.RAILWAY_PUBLIC_DOMAIN) {
+    return `https://${env.RAILWAY_PUBLIC_DOMAIN}/api`;
   }
 
-  if (process.env.RAILWAY_STATIC_URL) {
-    return `https://${process.env.RAILWAY_STATIC_URL}/api`;
+  if (env.RAILWAY_STATIC_URL) {
+    return `https://${env.RAILWAY_STATIC_URL}/api`;
   }
 
-  if (process.env.NODE_ENV === 'production') {
-    return DEFAULT_RAILWAY_API_URL;
+  if (env.isProduction) {
+    logger.warn('[Swagger] No production swagger server URL configured; using relative /api path.');
+    return '/api';
   }
 
   return LOCAL_API_URL;
@@ -32,9 +34,9 @@ const servers = [
       ? 'Development server'
       : 'Primary deployed server',
   },
-  ...(primaryApiServerUrl === LOCAL_API_URL
-    ? [{ url: DEFAULT_RAILWAY_API_URL, description: 'Railway production server' }]
-    : [{ url: LOCAL_API_URL, description: 'Local development server' }]),
+  ...(!env.isProduction && primaryApiServerUrl !== LOCAL_API_URL
+    ? [{ url: LOCAL_API_URL, description: 'Local development server' }]
+    : []),
 ];
 
 const options = {
@@ -308,7 +310,7 @@ const options = {
             dueDate: { type: 'string', format: 'date-time', nullable: true, example: '2026-02-20T17:00:00.000Z' },
             priority: {
               type: 'string',
-              enum: ['LOW', 'MEDIUM', 'HIGH'],
+              enum: ['LOW', 'MEDIUM', 'HIGH', 'URGENT'],
               nullable: true,
               example: 'HIGH',
             },
@@ -323,6 +325,16 @@ const options = {
               nullable: true,
               items: { type: 'string' },
               example: ['record video', 'push branch'],
+            },
+          },
+        },
+        TranscribeResponse: {
+          type: 'object',
+          required: ['text'],
+          properties: {
+            text: {
+              type: 'string',
+              example: 'Finish the sprint demo tomorrow at 5pm and make it high priority',
             },
           },
         },
@@ -346,6 +358,6 @@ const options = {
   ],
 };
 
-console.log('📁 Swagger scanning files at:', path.join(__dirname, './routes/*.ts'));
+logger.info(`Swagger scanning files at: ${path.join(__dirname, './routes/*.ts')}`);
 
 export const swaggerSpec = swaggerJsdoc(options);

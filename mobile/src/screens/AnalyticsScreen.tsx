@@ -1,92 +1,55 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import {
-  View,
+  ActivityIndicator,
+  Dimensions,
+  ScrollView,
+  StyleSheet,
   Text,
   TouchableOpacity,
-  StyleSheet,
-  ActivityIndicator,
-  ScrollView,
-  Dimensions,
+  View,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { MaterialIcons } from '@expo/vector-icons';
-import Svg, { Line, Path, Rect, Text as SvgText } from 'react-native-svg';
-import { useTheme } from '../theme';
+import Svg, { Line, Path, Text as SvgText } from 'react-native-svg';
 import ScreenWrapper from '../components/ScreenWrapper';
 import AppButton from '../components/AppButton';
 import {
+  AnalyticsPeriod,
+  AnalyticsTrendPoint,
   ApiError,
   getProductivityAnalytics,
   ProductivityAnalytics,
-  ProductivityHeatmapPoint,
-  ProductivityTrendPoint,
-  TaskCategoryPoint,
 } from '../config/api';
+import { useTheme } from '../theme';
+import { handleUnauthorizedIfNeeded } from '../auth/unauthorizedHandler';
 
-const DAY_ORDER = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
-const HEATMAP_HOUR_BUCKETS = [0, 4, 8, 12, 16, 20] as const;
+const PERIOD_OPTIONS: AnalyticsPeriod[] = ['day', 'week'];
 
-type DashboardSummary = {
-  completionRateText: string;
-  tasksThisWeekText: string;
-  mostProductiveHourText: string;
+const chartHeight = 180;
+const chartPadding = { left: 34, right: 10, top: 16, bottom: 26 };
+
+const formatPercent = (value: number): string => `${Math.round(value)}%`;
+
+const formatDateWindow = (startDate: string, endDate: string): string => {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  return `${start.getMonth() + 1}/${start.getDate()} - ${end.getMonth() + 1}/${end.getDate()}`;
 };
 
-const chartHeight = 170;
-const chartPadding = { left: 32, right: 12, top: 14, bottom: 26 };
-
-const getDayIndex = (day: ProductivityHeatmapPoint['day']): number => {
-  return DAY_ORDER.indexOf(day);
+const formatHours = (value: number | null): string => {
+  if (value === null) return '--';
+  if (value >= 24) {
+    const days = (value / 24).toFixed(1);
+    return `${days}d`;
+  }
+  return `${value.toFixed(1)}h`;
 };
 
-const getStartOfUtcWeekMonday = (reference: Date): Date => {
-  const day = reference.getUTCDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  return new Date(Date.UTC(reference.getUTCFullYear(), reference.getUTCMonth(), reference.getUTCDate() + diff));
-};
-
-const mapUtcHeatmapPointToLocal = (
-  entry: ProductivityHeatmapPoint,
-  weekStartUtc: Date
-): { day: ProductivityHeatmapPoint['day']; hour: number } | null => {
-  const dayIndex = getDayIndex(entry.day);
-  if (dayIndex < 0) return null;
-
-  const utcInstant = new Date(weekStartUtc);
-  utcInstant.setUTCDate(weekStartUtc.getUTCDate() + dayIndex);
-  utcInstant.setUTCHours(entry.hour, 0, 0, 0);
-
-  const localDay = DAY_ORDER[(utcInstant.getDay() + 6) % 7];
-  const localHour = utcInstant.getHours();
-
-  return { day: localDay, hour: localHour };
-};
-
-const formatTrendDate = (dateString: string): string => {
-  const date = new Date(dateString);
-  return `${date.getMonth() + 1}/${date.getDate()}`;
-};
-
-const toHourLabel = (hourString: string): string => {
-  const [rawHour] = hourString.split(':');
-  const hour = Number(rawHour);
-  if (Number.isNaN(hour)) return hourString;
-
-  // Backend provides UTC hour strings; convert using today's date so DST/current local offset is respected.
-  const now = new Date();
-  const sampleUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hour, 0, 0));
-  return sampleUtc.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-};
-
-const formatPercent = (value: number): string => `${Math.round(value * 100)}%`;
-
-const hasMeaningfulData = (analytics: ProductivityAnalytics): boolean => {
-  return (
-    analytics.tasks_completed_this_week > 0 ||
-    analytics.completion_rate > 0 ||
-    analytics.productivity_trends.some((point) => point.completed > 0 || point.created > 0) ||
-    analytics.productivity_heatmap.some((point) => point.count > 0)
-  );
+const hasNoAnalyticsData = (analytics: ProductivityAnalytics): boolean => {
+  const hasCreated = analytics.overview.totalCreated > 0;
+  const hasCompleted = analytics.overview.totalCompleted > 0;
+  const hasOverdue = analytics.overdue.overdueCount > 0;
+  return !hasCreated && !hasCompleted && !hasOverdue;
 };
 
 const buildLinePath = (
@@ -111,52 +74,105 @@ const buildLinePath = (
     .join(' ');
 };
 
-const normalizeHeatmap = (source: ProductivityHeatmapPoint[]): Record<string, number> => {
-  const map: Record<string, number> = {};
-  const weekStartUtc = getStartOfUtcWeekMonday(new Date());
+const getInsight = (analytics: ProductivityAnalytics): string => {
+  if (analytics.overdue.overdueCount > 0) {
+    return `You have ${analytics.overdue.overdueCount} overdue task${analytics.overdue.overdueCount === 1 ? '' : 's'}. Prioritize those first.`;
+  }
 
-  source.forEach((entry) => {
-    const localPoint = mapUtcHeatmapPointToLocal(entry, weekStartUtc);
-    if (!localPoint) return;
+  if (analytics.overview.completionRate >= 70) {
+    return 'Strong momentum. You are completing most of the work you create.';
+  }
 
-    // The UI heatmap displays 4-hour columns, so aggregate all source hours into those buckets.
-    const bucketHour = Math.floor(localPoint.hour / 4) * 4;
-    const key = `${localPoint.day}-${bucketHour}`;
-    map[key] = (map[key] || 0) + entry.count;
+  if (analytics.overview.completionRate >= 40) {
+    return 'Steady progress. Reducing in-progress tasks can improve throughput.';
+  }
+
+  return 'Your completion rate is low. Try creating fewer tasks and closing work daily.';
+};
+
+const getEncouragement = (
+  analytics: ProductivityAnalytics,
+  trendData: { createdCounts: number[]; completedCounts: number[] },
+): string => {
+  const createdSum = trendData.createdCounts.reduce((acc, value) => acc + value, 0);
+  const completedSum = trendData.completedCounts.reduce((acc, value) => acc + value, 0);
+  const rate = analytics.overview.completionRate;
+  const overdueCount = analytics.overdue.overdueCount;
+
+  if (completedSum === 0 && createdSum === 0) {
+    return 'Once tasks start moving, this screen will turn into your weekly confidence check-in.';
+  }
+
+  if (rate >= 80 && overdueCount === 0) {
+    return 'Excellent execution. You are turning plans into finished work with very little drag.';
+  }
+
+  if (rate >= 60) {
+    return 'Solid momentum. Keep the daily finish habit and your completion pace will keep climbing.';
+  }
+
+  if (rate >= 35) {
+    return 'Progress is building. Closing one more task per session will compound quickly.';
+  }
+
+  return 'Momentum is still forming. Focus on a smaller active list and aim for one clear finish today.';
+};
+
+const computeStreakStats = (completedCounts: number[]) => {
+  const totalPeriods = completedCounts.length;
+  const completedPeriods = completedCounts.filter((count) => count > 0).length;
+  const hasActivity = completedPeriods > 0;
+
+  let currentStreak = 0;
+  for (let i = completedCounts.length - 1; i >= 0; i -= 1) {
+    if (completedCounts[i] > 0) {
+      currentStreak += 1;
+    } else {
+      break;
+    }
+  }
+
+  let bestStreak = 0;
+  let running = 0;
+  completedCounts.forEach((count) => {
+    if (count > 0) {
+      running += 1;
+      if (running > bestStreak) {
+        bestStreak = running;
+      }
+    } else {
+      running = 0;
+    }
   });
-  return map;
+
+  const recentWindow = completedCounts.slice(-7).map((count) => count > 0);
+  const latestCompleted = completedCounts.length > 0 && completedCounts[completedCounts.length - 1] > 0;
+  const consistencyRate = totalPeriods === 0 ? 0 : (completedPeriods / totalPeriods) * 100;
+
+  return {
+    hasActivity,
+    totalPeriods,
+    completedPeriods,
+    currentStreak,
+    bestStreak,
+    recentWindow,
+    latestCompleted,
+    consistencyRate,
+  };
 };
 
-const getHeatmapMaxCount = (normalizedMap: Record<string, number>): number => {
-  return Object.values(normalizedMap).reduce((max, count) => Math.max(max, count), 0);
-};
-
-const intensityColor = (count: number, max: number, surface: string, primary: string): string => {
-  if (count <= 0 || max <= 0) return surface;
-  const ratio = count / max;
-  if (ratio <= 0.25) return `${primary}33`;
-  if (ratio <= 0.5) return `${primary}66`;
-  if (ratio <= 0.75) return `${primary}99`;
-  return primary;
-};
-
-const getTrendWindow = (points: ProductivityTrendPoint[]): ProductivityTrendPoint[] => {
-  if (points.length <= 7) return points;
-  return points.slice(points.length - 7);
-};
-
-export default function AnalyticsScreen({ navigation }: any) {
+export default function AnalyticsScreen({ navigation, onSessionExpired }: any) {
   const { colors } = useTheme();
   const screenWidth = Dimensions.get('window').width;
-  // Keep charts inside card bounds: outer padding (16*2) + card horizontal padding (12*2).
   const chartWidth = screenWidth - 56;
 
+  const [period, setPeriod] = useState<AnalyticsPeriod>('day');
   const [analytics, setAnalytics] = useState<ProductivityAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadAnalytics = async (silent = false) => {
+  const loadAnalytics = useCallback(async (silent = false) => {
     try {
       if (silent) {
         setRefreshing(true);
@@ -165,66 +181,90 @@ export default function AnalyticsScreen({ navigation }: any) {
       }
       setError(null);
 
-      const data = await getProductivityAnalytics();
-      setAnalytics(data);
+      const payload = await getProductivityAnalytics({ period });
+      setAnalytics(payload);
     } catch (err) {
-      const message =
-        err instanceof ApiError ? err.message : 'Could not load analytics right now.';
+      if (await handleUnauthorizedIfNeeded({ error: err, source: 'AnalyticsScreen.loadAnalytics', onSessionExpired })) {
+        return;
+      }
+
+      const message = err instanceof ApiError ? err.message : 'Could not load analytics right now.';
       setError(message);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [onSessionExpired, period]);
 
   useFocusEffect(
     useCallback(() => {
       loadAnalytics();
-    }, [])
+    }, [loadAnalytics])
   );
 
-  const summary: DashboardSummary | null = useMemo(() => {
-    if (!analytics) return null;
+  const trendData = useMemo(() => {
+    const created = analytics?.trends.created || [];
+    const completed = analytics?.trends.completed || [];
+
+    const maxPoints = period === 'week' ? 10 : 12;
+    const createdWindow = created.slice(-maxPoints);
+    const completedWindow = completed.slice(-maxPoints);
+
+    const createdCounts = createdWindow.map((item) => item.count);
+    const completedCounts = completedWindow.map((item) => item.count);
+    const max = Math.max(1, ...createdCounts, ...completedCounts);
+
     return {
-      completionRateText: formatPercent(analytics.completion_rate),
-      tasksThisWeekText: String(analytics.tasks_completed_this_week),
-      mostProductiveHourText: toHourLabel(analytics.most_productive_hour),
+      created: createdWindow,
+      completed: completedWindow,
+      createdCounts,
+      completedCounts,
+      max,
+    };
+  }, [analytics, period]);
+
+  const performanceStats = useMemo(() => {
+    if (!analytics) {
+      return {
+        onTimeRate: 0,
+        onTimeTotal: 0,
+      };
+    }
+
+    const onTimeTotal = analytics.overdue.onTimeCount + analytics.overdue.lateCount;
+    const onTimeRate = onTimeTotal === 0 ? 0 : (analytics.overdue.onTimeCount / onTimeTotal) * 100;
+
+    return {
+      onTimeRate,
+      onTimeTotal,
     };
   }, [analytics]);
 
-  const trendData = useMemo(() => {
-    const points = getTrendWindow(analytics?.productivity_trends || []);
-    const completed = points.map((p) => p.completed);
-    const created = points.map((p) => p.created);
-    const max = Math.max(1, ...completed, ...created);
-    return { points, completed, created, max };
-  }, [analytics]);
+  const streakStats = useMemo(() => computeStreakStats(trendData.completedCounts), [trendData.completedCounts]);
 
-  const categoryData = useMemo(() => {
-    const categories = analytics?.task_categories || [];
-    return { categories };
-  }, [analytics]);
-
-  const heatmapData = useMemo(() => {
-    const points = analytics?.productivity_heatmap || [];
-    const normalized = normalizeHeatmap(points);
-    const maxCount = getHeatmapMaxCount(normalized);
-    return { normalized, maxCount };
-  }, [analytics]);
+  const renderHeader = () => (
+    <View style={[styles.header, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
+      <TouchableOpacity style={styles.headerBtn} onPress={() => navigation.goBack()}>
+        <MaterialIcons name="arrow-back" size={24} color={colors.text} />
+      </TouchableOpacity>
+      <Text style={[styles.headerTitle, { color: colors.text }]}>Analytics</Text>
+      <TouchableOpacity style={styles.headerBtn} onPress={() => loadAnalytics(true)}>
+        {refreshing ? (
+          <ActivityIndicator size="small" color={colors.primary} />
+        ) : (
+          <MaterialIcons name="refresh" size={22} color={colors.primary} />
+        )}
+      </TouchableOpacity>
+    </View>
+  );
 
   if (loading) {
     return (
       <ScreenWrapper withHorizontalPadding={false}>
-        <View style={[styles.header, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
-          <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-            <MaterialIcons name="arrow-back" size={24} color={colors.text} />
-          </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Analytics</Text>
-          <View style={styles.backButton} />
-        </View>
+        {renderHeader()}
         <View style={styles.centerState}>
           <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={[styles.stateText, { color: colors.mutedText }]}>Loading productivity insights...</Text>
+          <Text style={[styles.stateText, { color: colors.mutedText }]}>Loading analytics...</Text>
         </View>
       </ScreenWrapper>
     );
@@ -233,225 +273,178 @@ export default function AnalyticsScreen({ navigation }: any) {
   if (error) {
     return (
       <ScreenWrapper withHorizontalPadding={false}>
-        <View style={[styles.header, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
-          <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-            <MaterialIcons name="arrow-back" size={24} color={colors.text} />
-          </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Analytics</Text>
-          <View style={styles.backButton} />
-        </View>
+        {renderHeader()}
         <View style={styles.centerState}>
-          <MaterialIcons name="error-outline" size={46} color={colors.danger} />
-          <Text style={[styles.stateTitle, { color: colors.text }]}>Couldn’t load analytics</Text>
+          <MaterialIcons name="error-outline" size={44} color={colors.danger} />
+          <Text style={[styles.stateTitle, { color: colors.text }]}>Could not load analytics</Text>
           <Text style={[styles.stateText, { color: colors.mutedText }]}>{error}</Text>
-          <AppButton
-            title="Retry"
-            onPress={() => loadAnalytics()}
-            style={styles.retryButton}
-          />
+          <AppButton title="Retry" onPress={() => loadAnalytics()} style={styles.retryButton} />
         </View>
       </ScreenWrapper>
     );
   }
 
-  if (!analytics || !summary) {
+  if (!analytics) {
     return null;
   }
 
-  const empty = !hasMeaningfulData(analytics);
+  const isEmpty = hasNoAnalyticsData(analytics);
 
   return (
     <ScreenWrapper withHorizontalPadding={false}>
-      <View style={[styles.header, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
-        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-          <MaterialIcons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Analytics</Text>
-        <TouchableOpacity style={styles.backButton} onPress={() => loadAnalytics(true)}>
-          {refreshing ? (
-            <ActivityIndicator size="small" color={colors.primary} />
-          ) : (
-            <MaterialIcons name="refresh" size={22} color={colors.primary} />
-          )}
-        </TouchableOpacity>
-      </View>
-
+      {renderHeader()}
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <Text style={[styles.subtitle, { color: colors.mutedText }]}>See how your productivity is trending</Text>
-
-        <View style={styles.summaryGrid}>
-          <SummaryCard
-            icon="task-alt"
-            label="Completion Rate"
-            value={summary.completionRateText}
-            colors={colors}
-          />
-          <SummaryCard
-            icon="check-circle"
-            label="Completed This Week"
-            value={summary.tasksThisWeekText}
-            colors={colors}
-          />
-          <SummaryCard
-            icon="schedule"
-            label="Most Productive Hour"
-            value={summary.mostProductiveHourText}
-            colors={colors}
-            fullWidth
-          />
+        <View style={styles.periodTabs}>
+          {PERIOD_OPTIONS.map((option) => {
+            const active = option === period;
+            return (
+              <TouchableOpacity
+                key={option}
+                style={[
+                  styles.periodTab,
+                  {
+                    backgroundColor: active ? colors.primary : colors.surface,
+                    borderColor: active ? colors.primary : colors.border,
+                    shadowColor: active ? colors.primary : 'transparent',
+                    shadowOpacity: active ? 0.25 : 0,
+                    shadowOffset: { width: 0, height: 3 },
+                    shadowRadius: 6,
+                    elevation: active ? 3 : 0,
+                  },
+                ]}
+                onPress={() => setPeriod(option)}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.periodTabText, { color: active ? '#FFFFFF' : colors.mutedText }]}>
+                  {option === 'day' ? 'Daily' : 'Weekly'}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
-        {empty ? (
+        <Text style={[styles.windowText, { color: colors.mutedText }]}>
+          {formatDateWindow(analytics.range.startDate, analytics.range.endDate)}
+        </Text>
+
+        <View style={[styles.reinforcementCard, { backgroundColor: `${colors.primary}12`, borderColor: `${colors.primary}2B` }]}> 
+          <View style={[styles.reinforcementIconWrap, { backgroundColor: `${colors.primary}1F` }]}> 
+            <MaterialIcons name="insights" size={18} color={colors.primary} />
+          </View>
+          <View style={styles.reinforcementBody}>
+            <Text style={[styles.reinforcementTitle, { color: colors.text }]}>Your momentum snapshot</Text>
+            <Text style={[styles.reinforcementText, { color: colors.mutedText }]}>
+              {getEncouragement(analytics, trendData)}
+            </Text>
+          </View>
+        </View>
+
+        <SectionCard title="Overview" subtitle="How your effort translated into outcomes" colors={colors}>
+          <View style={styles.summaryGrid}>
+            <KpiCard label="Completion Rate" value={formatPercent(analytics.overview.completionRate)} icon="task-alt" colors={colors} />
+            <KpiCard label="Tasks Created" value={String(analytics.overview.totalCreated)} icon="add-chart" colors={colors} />
+            <KpiCard label="Tasks Completed" value={String(analytics.overview.totalCompleted)} icon="check-circle" colors={colors} />
+            <KpiCard label="Overdue Open" value={String(analytics.overdue.overdueCount)} icon="warning" colors={colors} danger />
+          </View>
+          <Text style={[styles.insightText, { color: colors.text }]}>{getInsight(analytics)}</Text>
+        </SectionCard>
+
+        {isEmpty ? (
           <View style={[styles.emptyCard, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
             <MaterialIcons name="insights" size={34} color={colors.primary} />
-            <Text style={[styles.emptyTitle, { color: colors.text }]}>No productivity history yet</Text>
-            <Text style={[styles.emptyBody, { color: colors.mutedText }]}>Complete a few tasks and come back to unlock trends and charts.</Text>
+            <Text style={[styles.emptyTitle, { color: colors.text }]}>No analytics yet</Text>
+            <Text style={[styles.emptyBody, { color: colors.mutedText }]}>Create and complete tasks to unlock trend and performance insights.</Text>
           </View>
         ) : (
           <>
-            <AnalyticsCard title="Tasks Over Time" subtitle="Created vs completed (last 7 days)" colors={colors}>
-              <Svg width={chartWidth} height={chartHeight}>
-                {[0, 1, 2, 3].map((index) => {
-                  const y =
-                    chartPadding.top +
-                    ((chartHeight - chartPadding.top - chartPadding.bottom) / 3) * index;
-                  return (
-                    <Line
-                      key={`grid-${index}`}
-                      x1={chartPadding.left}
-                      y1={y}
-                      x2={chartWidth - chartPadding.right}
-                      y2={y}
-                      stroke={colors.border}
-                      strokeWidth={1}
-                    />
-                  );
-                })}
-                <Path
-                  d={buildLinePath(trendData.created, chartWidth, chartHeight, trendData.max)}
-                  stroke={colors.mutedText}
-                  strokeWidth={2}
-                  fill="none"
-                />
-                <Path
-                  d={buildLinePath(trendData.completed, chartWidth, chartHeight, trendData.max)}
-                  stroke={colors.primary}
-                  strokeWidth={3}
-                  fill="none"
-                />
-                {trendData.points.map((point, index) => {
-                  const x =
-                    chartPadding.left +
-                    ((chartWidth - chartPadding.left - chartPadding.right) * index) /
-                      Math.max(trendData.points.length - 1, 1);
-                  return (
-                    <SvgText
-                      key={`${point.date}-x`}
-                      x={x}
-                      y={chartHeight - 8}
-                      fill={colors.mutedText}
-                      fontSize="10"
-                      textAnchor="middle"
-                    >
-                      {formatTrendDate(point.date)}
-                    </SvgText>
-                  );
-                })}
-              </Svg>
+            <SectionCard title="Trends" subtitle="Created vs completed over the selected window" colors={colors}>
+              <TrendChart
+                created={trendData.created}
+                completed={trendData.completed}
+                createdCounts={trendData.createdCounts}
+                completedCounts={trendData.completedCounts}
+                max={trendData.max}
+                width={chartWidth}
+                colors={colors}
+              />
               <View style={styles.legendRow}>
                 <LegendDot color={colors.primary} label="Completed" textColor={colors.mutedText} />
                 <LegendDot color={colors.mutedText} label="Created" textColor={colors.mutedText} />
               </View>
-            </AnalyticsCard>
+            </SectionCard>
 
-            <AnalyticsCard title="Task Categories" subtitle="Completion by category" colors={colors}>
-              {categoryData.categories.length === 0 ? (
-                <Text style={[styles.noDataText, { color: colors.mutedText }]}>No category data yet.</Text>
-              ) : (
-                categoryData.categories.map((item: TaskCategoryPoint) => {
-                  const total = item.count || 1;
-                  const completedRatio = item.completed / total;
-                  const widthPct = Math.max(0, Math.min(100, Math.round(completedRatio * 100)));
-                  return (
-                    <View key={item.category} style={styles.categoryRow}>
-                      <View style={styles.categoryHeader}>
-                        <Text style={[styles.categoryLabel, { color: colors.text }]}>{item.category}</Text>
-                        <Text style={[styles.categoryMeta, { color: colors.mutedText }]}>
-                          {item.completed}/{item.count}
-                        </Text>
-                      </View>
-                      <View style={[styles.progressTrack, { backgroundColor: colors.background }]}> 
-                        <View
-                          style={[
-                            styles.progressFill,
-                            { width: `${widthPct}%`, backgroundColor: colors.primary },
-                          ]}
-                        />
-                      </View>
+            <SectionCard title="Consistency Streak" subtitle="A quick pulse of your follow-through" colors={colors}>
+              {streakStats.hasActivity ? (
+                <>
+                  <View style={[styles.streakHero, { backgroundColor: `${colors.primary}10`, borderColor: `${colors.primary}35` }]}> 
+                    <View style={[styles.streakHeroIconWrap, { backgroundColor: `${colors.primary}1F` }]}> 
+                      <MaterialIcons name="local-fire-department" size={18} color={colors.primary} />
                     </View>
-                  );
-                })
-              )}
-            </AnalyticsCard>
-
-            <AnalyticsCard title="Productivity Heatmap" subtitle="Completions by weekday and hour (local time)" colors={colors}>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <View>
-                  <View style={styles.heatmapHeaderRow}>
-                    <View style={styles.heatmapDayLabelWrap} />
-                    {HEATMAP_HOUR_BUCKETS.map((hour) => (
-                      <Text key={`hour-${hour}`} style={[styles.heatmapHourLabel, { color: colors.mutedText }]}>
-                        {hour}
+                    <View style={styles.streakHeroBody}>
+                      <Text style={[styles.streakHeroValue, { color: colors.text }]}>{streakStats.currentStreak}</Text>
+                      <Text style={[styles.streakHeroLabel, { color: colors.mutedText }]}>current streak</Text>
+                    </View>
+                    <View style={[styles.streakStatusPill, { backgroundColor: streakStats.latestCompleted ? `${colors.success}22` : `${colors.border}90` }]}> 
+                      <Text style={[styles.streakStatusText, { color: streakStats.latestCompleted ? colors.success : colors.mutedText }]}> 
+                        {streakStats.latestCompleted ? `On track this ${period}` : `No completion yet this ${period}`}
                       </Text>
-                    ))}
+                    </View>
                   </View>
 
-                  {DAY_ORDER.map((day) => (
-                    <View key={day} style={styles.heatmapRow}>
-                      <View style={styles.heatmapDayLabelWrap}>
-                        <Text style={[styles.heatmapDayLabel, { color: colors.mutedText }]}>{day}</Text>
-                      </View>
-                      {HEATMAP_HOUR_BUCKETS.map((hour) => {
-                        const count = heatmapData.normalized[`${day}-${hour}`] || 0;
-                        return (
-                          <View
-                            key={`${day}-${hour}`}
-                            style={[
-                              styles.heatmapCell,
-                              {
-                                backgroundColor: intensityColor(
-                                  count,
-                                  heatmapData.maxCount,
-                                  colors.background,
-                                  colors.primary
-                                ),
-                                borderColor: colors.border,
-                              },
-                            ]}
-                          >
-                            {count > 0 ? (
-                              <Text style={[styles.heatmapCellText, { color: colors.text }]}>{count}</Text>
-                            ) : null}
-                          </View>
-                        );
-                      })}
+                  <View style={styles.streakMetaRow}>
+                    <View style={[styles.streakMetaCard, { borderColor: colors.border, backgroundColor: colors.background }]}> 
+                      <Text style={[styles.streakMetaLabel, { color: colors.mutedText }]}>Best streak</Text>
+                      <Text style={[styles.streakMetaValue, { color: colors.text }]}>{streakStats.bestStreak}</Text>
                     </View>
-                  ))}
-                </View>
-              </ScrollView>
-            </AnalyticsCard>
+                    <View style={[styles.streakMetaCard, { borderColor: colors.border, backgroundColor: colors.background }]}> 
+                      <Text style={[styles.streakMetaLabel, { color: colors.mutedText }]}>Consistency</Text>
+                      <Text style={[styles.streakMetaValue, { color: colors.text }]}>{formatPercent(streakStats.consistencyRate)}</Text>
+                    </View>
+                  </View>
 
-            <AnalyticsCard title="Completed Tasks Per Day" subtitle="Recent daily output" colors={colors}>
-              {(analytics.tasks_completed_per_day || []).length === 0 ? (
-                <Text style={[styles.noDataText, { color: colors.mutedText }]}>No completed tasks yet.</Text>
+                  <View style={styles.streakMiniTrack}>
+                    {streakStats.recentWindow.map((isComplete, index) => (
+                      <View
+                        key={`streak-dot-${index}`}
+                        style={[
+                          styles.streakMiniDot,
+                          {
+                            backgroundColor: isComplete ? colors.primary : `${colors.border}CC`,
+                            borderColor: isComplete ? `${colors.primary}66` : `${colors.border}CC`,
+                          },
+                        ]}
+                      />
+                    ))}
+                  </View>
+                  <Text style={[styles.streakMiniCaption, { color: colors.mutedText }]}>Recent completion consistency</Text>
+                </>
               ) : (
-                <MiniBars
-                  data={analytics.tasks_completed_per_day.slice(-10)}
-                  colors={colors}
-                  width={chartWidth}
-                />
+                <View style={[styles.streakEmptyState, { backgroundColor: colors.background, borderColor: colors.border }]}> 
+                  <MaterialIcons name="local-fire-department" size={20} color={colors.primary} />
+                  <View style={styles.streakEmptyBody}>
+                    <Text style={[styles.streakEmptyTitle, { color: colors.text }]}>Start your streak</Text>
+                    <Text style={[styles.streakEmptyText, { color: colors.mutedText }]}>Complete a task this {period} to begin building consistency.</Text>
+                  </View>
+                </View>
               )}
-            </AnalyticsCard>
+
+              <Text style={[styles.streakSupportText, { color: colors.mutedText }]}> 
+                {streakStats.hasActivity
+                  ? `Completed in ${streakStats.completedPeriods} of ${streakStats.totalPeriods} recent ${period === 'day' ? 'days' : 'weeks'}.`
+                  : `Your consistency view appears as soon as completions are recorded.`}
+              </Text>
+            </SectionCard>
+
+            <SectionCard title="Performance" subtitle="Execution quality and consistency" colors={colors}>
+              <View style={styles.performanceRow}>
+                <PerformanceMetric label="Avg completion time" value={formatHours(analytics.productivity.avgCompletionTimeHours)} colors={colors} />
+                <PerformanceMetric label="Completed in range" value={String(analytics.productivity.tasksCompletedInRange)} colors={colors} />
+              </View>
+              <View style={styles.performanceRow}>
+                <PerformanceMetric label="On-time completion" value={performanceStats.onTimeTotal === 0 ? '--' : formatPercent(performanceStats.onTimeRate)} colors={colors} />
+                <PerformanceMetric label="Completed late" value={String(analytics.overdue.lateCount)} colors={colors} />
+              </View>
+            </SectionCard>
           </>
         )}
       </ScrollView>
@@ -459,40 +452,7 @@ export default function AnalyticsScreen({ navigation }: any) {
   );
 }
 
-function SummaryCard({
-  icon,
-  label,
-  value,
-  colors,
-  fullWidth,
-}: {
-  icon: keyof typeof MaterialIcons.glyphMap;
-  label: string;
-  value: string;
-  colors: any;
-  fullWidth?: boolean;
-}) {
-  return (
-    <View
-      style={[
-        styles.summaryCard,
-        {
-          backgroundColor: colors.surface,
-          borderColor: colors.border,
-          width: fullWidth ? '100%' : '48.5%',
-        },
-      ]}
-    >
-      <View style={[styles.summaryIconWrap, { backgroundColor: colors.background }]}> 
-        <MaterialIcons name={icon} size={18} color={colors.primary} />
-      </View>
-      <Text style={[styles.summaryLabel, { color: colors.mutedText }]}>{label}</Text>
-      <Text style={[styles.summaryValue, { color: colors.text }]}>{value}</Text>
-    </View>
-  );
-}
-
-function AnalyticsCard({
+function SectionCard({
   title,
   subtitle,
   children,
@@ -504,10 +464,53 @@ function AnalyticsCard({
   colors: any;
 }) {
   return (
-    <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
-      <Text style={[styles.cardTitle, { color: colors.text }]}>{title}</Text>
-      <Text style={[styles.cardSubtitle, { color: colors.mutedText }]}>{subtitle}</Text>
+    <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <View style={styles.cardHeader}>
+        <Text style={[styles.cardTitle, { color: colors.text }]}>{title}</Text>
+        <Text style={[styles.cardSubtitle, { color: colors.mutedText }]}>{subtitle}</Text>
+      </View>
       {children}
+    </View>
+  );
+}
+
+function KpiCard({
+  label,
+  value,
+  icon,
+  colors,
+  danger,
+}: {
+  label: string;
+  value: string;
+  icon: keyof typeof MaterialIcons.glyphMap;
+  colors: any;
+  danger?: boolean;
+}) {
+  return (
+    <View style={[styles.kpiCard, { borderColor: colors.border, backgroundColor: colors.surface }]}> 
+      <View style={[styles.kpiIconWrap, { backgroundColor: colors.background }]}> 
+        <MaterialIcons name={icon} size={18} color={danger ? colors.danger : colors.primary} />
+      </View>
+      <Text style={[styles.kpiLabel, { color: colors.mutedText }]}>{label}</Text>
+      <Text style={[styles.kpiValue, { color: danger ? colors.danger : colors.text }]}>{value}</Text>
+    </View>
+  );
+}
+
+function PerformanceMetric({
+  label,
+  value,
+  colors,
+}: {
+  label: string;
+  value: string;
+  colors: any;
+}) {
+  return (
+    <View style={[styles.performanceCard, { borderColor: colors.border, backgroundColor: colors.background }]}> 
+      <Text style={[styles.performanceLabel, { color: colors.mutedText }]}>{label}</Text>
+      <Text style={[styles.performanceValue, { color: colors.text }]}>{value}</Text>
     </View>
   );
 }
@@ -521,39 +524,68 @@ function LegendDot({ color, label, textColor }: { color: string; label: string; 
   );
 }
 
-function MiniBars({
-  data,
-  colors,
+function TrendChart({
+  created,
+  completed,
+  createdCounts,
+  completedCounts,
+  max,
   width,
+  colors,
 }: {
-  data: Array<{ date: string; count: number }>;
-  colors: any;
+  created: AnalyticsTrendPoint[];
+  completed: AnalyticsTrendPoint[];
+  createdCounts: number[];
+  completedCounts: number[];
+  max: number;
   width: number;
+  colors: any;
 }) {
-  const max = Math.max(1, ...data.map((d) => d.count));
-  const barGap = 8;
-  const barsAreaWidth = width - 12;
-  const barWidth = Math.max(12, (barsAreaWidth - barGap * (data.length - 1)) / data.length);
+  const labels = created.length > 0 ? created : completed;
 
   return (
-    <Svg width={width} height={150}>
-      {data.map((point, index) => {
-        const height = (point.count / max) * 92;
-        const x = 6 + index * (barWidth + barGap);
-        const y = 104 - height;
+    <Svg width={width} height={chartHeight}>
+      {[0, 1, 2, 3].map((index) => {
+        const y = chartPadding.top + ((chartHeight - chartPadding.top - chartPadding.bottom) / 3) * index;
         return (
-          <React.Fragment key={`${point.date}-${index}`}>
-            <Rect x={x} y={y} width={barWidth} height={height} rx={4} fill={colors.primary} />
-            <SvgText
-              x={x + barWidth / 2}
-              y={118}
-              fontSize="10"
-              fill={colors.mutedText}
-              textAnchor="middle"
-            >
-              {formatTrendDate(point.date)}
-            </SvgText>
-          </React.Fragment>
+          <Line
+            key={`grid-${index}`}
+            x1={chartPadding.left}
+            y1={y}
+            x2={width - chartPadding.right}
+            y2={y}
+            stroke={colors.border}
+            strokeWidth={1}
+          />
+        );
+      })}
+
+      <Path
+        d={buildLinePath(createdCounts, width, chartHeight, max)}
+        stroke={colors.mutedText}
+        strokeWidth={2}
+        fill="none"
+      />
+      <Path
+        d={buildLinePath(completedCounts, width, chartHeight, max)}
+        stroke={colors.primary}
+        strokeWidth={3}
+        fill="none"
+      />
+
+      {labels.map((point, index) => {
+        const x = chartPadding.left + ((width - chartPadding.left - chartPadding.right) * index) / Math.max(labels.length - 1, 1);
+        return (
+          <SvgText
+            key={`${point.periodStart}-label`}
+            x={x}
+            y={chartHeight - 8}
+            fill={colors.mutedText}
+            fontSize="10"
+            textAnchor="middle"
+          >
+            {point.label}
+          </SvgText>
         );
       })}
     </Svg>
@@ -561,19 +593,17 @@ function MiniBars({
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  backButton: {
+  headerBtn: {
     width: 40,
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -584,72 +614,246 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 16,
     paddingTop: 14,
-    paddingBottom: 40,
+    paddingBottom: 56,
   },
-  subtitle: {
-    fontSize: 14,
+  periodTabs: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 6,
+  },
+  periodTab: {
+    borderWidth: 1,
+    borderRadius: 99,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+  },
+  periodTabText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  windowText: {
+    fontSize: 12,
+    marginTop: 8,
+    marginBottom: 12,
+    letterSpacing: 0.2,
+  },
+  reinforcementCard: {
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     marginBottom: 14,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  reinforcementIconWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  reinforcementBody: {
+    flex: 1,
+  },
+  reinforcementTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  reinforcementText: {
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  card: {
+    borderWidth: 1,
+    borderRadius: 18,
+    marginBottom: 14,
+    paddingVertical: 15,
+    paddingHorizontal: 14,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    elevation: 2,
+  },
+  cardHeader: {
+    marginBottom: 13,
+  },
+  cardTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  cardSubtitle: {
+    fontSize: 12,
+    marginTop: 3,
+    lineHeight: 17,
   },
   summaryGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
-    marginBottom: 16,
-    gap: 10,
+    gap: 8,
   },
-  summaryCard: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 12,
+  kpiCard: {
+    width: '48.5%',
+    borderRadius: 13,
+    borderWidth: 1,
     padding: 12,
-    minHeight: 92,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 3,
-    elevation: 2,
+    minHeight: 96,
   },
-  summaryIconWrap: {
-    width: 28,
-    height: 28,
-    borderRadius: 7,
+  kpiIconWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 8,
+    marginBottom: 10,
   },
-  summaryLabel: {
+  kpiLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+    marginBottom: 4,
+  },
+  kpiValue: {
+    fontSize: 24,
+    fontWeight: '700',
+  },
+  insightText: {
+    marginTop: 12,
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  streakHero: {
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  streakHeroIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  streakHeroBody: {
+    flex: 1,
+  },
+  streakHeroValue: {
+    fontSize: 30,
+    fontWeight: '800',
+    lineHeight: 32,
+  },
+  streakHeroLabel: {
+    marginTop: 2,
     fontSize: 12,
-    marginBottom: 5,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+  },
+  streakStatusPill: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  streakStatusText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  streakMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 9,
+    marginBottom: 10,
+    gap: 8,
+  },
+  streakMetaCard: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 11,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+  },
+  streakMetaLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  streakMetaValue: {
+    fontSize: 19,
+    fontWeight: '700',
+  },
+  streakMiniTrack: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  streakMiniDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  streakMiniCaption: {
+    marginTop: 6,
+    fontSize: 11,
     fontWeight: '500',
   },
-  summaryValue: {
-    fontSize: 22,
-    fontWeight: '700',
-  },
-  card: {
-    borderWidth: StyleSheet.hairlineWidth,
+  streakEmptyState: {
+    borderWidth: 1,
     borderRadius: 12,
-    marginBottom: 14,
-    paddingVertical: 12,
     paddingHorizontal: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
-  cardTitle: {
-    fontSize: 16,
+  streakEmptyBody: {
+    marginLeft: 10,
+    flex: 1,
+  },
+  streakEmptyTitle: {
+    fontSize: 14,
     fontWeight: '700',
+    marginBottom: 2,
   },
-  cardSubtitle: {
+  streakEmptyText: {
     fontSize: 12,
-    marginTop: 2,
-    marginBottom: 10,
+    lineHeight: 17,
+  },
+  streakSupportText: {
+    marginTop: 10,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  performanceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  performanceCard: {
+    width: '48.5%',
+    borderWidth: 1,
+    borderRadius: 11,
+    padding: 11,
+  },
+  performanceLabel: {
+    fontSize: 12,
+  },
+  performanceValue: {
+    marginTop: 4,
+    fontSize: 18,
+    fontWeight: '700',
   },
   legendRow: {
     flexDirection: 'row',
     gap: 16,
-    marginTop: 2,
+    marginTop: 4,
   },
   legendItem: {
     flexDirection: 'row',
@@ -665,83 +869,22 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
   },
-  categoryRow: {
-    marginBottom: 10,
-  },
-  categoryHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 5,
-  },
-  categoryLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  categoryMeta: {
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  progressTrack: {
-    height: 9,
-    borderRadius: 99,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: 9,
-    borderRadius: 99,
-  },
-  heatmapHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  heatmapHourLabel: {
-    width: 34,
-    textAlign: 'center',
-    fontSize: 10,
-  },
-  heatmapRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  heatmapDayLabelWrap: {
-    width: 34,
-    alignItems: 'flex-start',
-  },
-  heatmapDayLabel: {
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  heatmapCell: {
-    width: 30,
-    height: 26,
-    borderRadius: 7,
-    borderWidth: StyleSheet.hairlineWidth,
-    marginHorizontal: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  heatmapCellText: {
-    fontSize: 10,
-    fontWeight: '700',
-  },
   emptyCard: {
     borderWidth: StyleSheet.hairlineWidth,
     borderRadius: 12,
-    padding: 22,
+    padding: 20,
     alignItems: 'center',
-    marginTop: 12,
+    marginTop: 8,
   },
   emptyTitle: {
     marginTop: 10,
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '700',
   },
   emptyBody: {
-    marginTop: 7,
-    fontSize: 14,
+    marginTop: 8,
     textAlign: 'center',
+    fontSize: 14,
     lineHeight: 20,
   },
   centerState: {
@@ -764,9 +907,5 @@ const styles = StyleSheet.create({
   retryButton: {
     marginTop: 16,
     minWidth: 140,
-  },
-  noDataText: {
-    fontSize: 13,
-    marginBottom: 2,
   },
 });
