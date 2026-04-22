@@ -13,6 +13,7 @@ import {
   View,
   Alert
 } from 'react-native';
+import * as AppleAuthentication from 'expo-apple-authentication';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -20,6 +21,7 @@ import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from 'reac
 import { ApiError, API_BASE_URL, getUserFriendlyErrorMessage, saveAuthToken } from '../config/api';
 import { useTheme, useThemePreference } from '../theme';
 import { getGoogleErrorMessage, getGoogleSignInConfigurationIssue, signInWithGoogle } from '../config/googleSignIn';
+import { getAppleErrorMessage, isAppleAuthenticationAvailable, signInWithApple, AppleSignInCancelledError } from '../config/appleSignIn';
 import { logger } from '../utils/logger';
 
 type Palette = {
@@ -170,7 +172,7 @@ const AuthInput = ({
 type LoginScreenProps = {
   navigation: any;
   route?: any;
-  onAuthSuccess?: () => void;
+  onAuthSuccess?: (user?: any) => void | Promise<void>;
 };
 
 export default function LoginScreen({ navigation, route, onAuthSuccess }: LoginScreenProps) {
@@ -191,7 +193,9 @@ export default function LoginScreen({ navigation, route, onAuthSuccess }: LoginS
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
-  const isAuthBusy = isSubmitting || isGoogleSubmitting;
+  const [isAppleSubmitting, setIsAppleSubmitting] = useState(false);
+  const [appleAvailable, setAppleAvailable] = useState<boolean | null>(null);
+  const isAuthBusy = isSubmitting || isGoogleSubmitting || isAppleSubmitting;
   const googleConfigIssue = getGoogleSignInConfigurationIssue();
 
   React.useEffect(() => {
@@ -212,6 +216,13 @@ export default function LoginScreen({ navigation, route, onAuthSuccess }: LoginS
     }
   }, [navigation, route?.params?.email, route?.params?.postResetMessage]);
 
+  React.useEffect(() => {
+    // Check if Apple authentication is available on this device
+    isAppleAuthenticationAvailable()
+      .then(setAppleAvailable)
+      .catch(() => setAppleAvailable(false));
+  }, []);
+
   const completeAuthSuccess = async (data: any, successMessage: string) => {
     await saveAuthToken(data.token);
     await AsyncStorage.setItem('user', JSON.stringify(data.user));
@@ -222,7 +233,7 @@ export default function LoginScreen({ navigation, route, onAuthSuccess }: LoginS
     }
 
     if (onAuthSuccess) {
-      onAuthSuccess();
+      await onAuthSuccess(data.user);
       return;
     }
 
@@ -483,6 +494,77 @@ export default function LoginScreen({ navigation, route, onAuthSuccess }: LoginS
       setIsGoogleSubmitting(false);
     }
   };
+  const handleAppleContinue = async () => {
+    if (isSubmitting || isAppleSubmitting) {
+      return;
+    }
+
+    if (!appleAvailable) {
+      Alert.alert('Apple Sign-In Unavailable', 'Apple Sign-In is not available on this device.');
+      return;
+    }
+
+    setIsAppleSubmitting(true);
+
+    try {
+      const appleResult = await signInWithApple();
+
+      const response = await performTimedRequest(`${API_BASE_URL}/api/auth/apple`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          idToken: appleResult.idToken,
+          user: appleResult.user,
+        }),
+      });
+
+      const rawText = await response.text();
+
+      let data: any = null;
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        logger.error('[Apple Auth] Non-JSON response received');
+        Alert.alert('Apple Sign-In Failed', 'Server error. Please try again later.');
+        return;
+      }
+
+      if (!response.ok) {
+        const apiMessage =
+          typeof data?.error === 'string' && data.error.length > 0
+            ? data.error
+            : typeof data?.message === 'string' && data.message.length > 0
+            ? data.message
+            : 'Unable to continue with Apple right now.';
+
+        if (data?.code === 'ACCOUNT_EXISTS') {
+          logger.warn('[Apple Auth] Account exists error');
+          Alert.alert(
+            'Account Already Exists',
+            'This email is already associated with an account. Please sign in with your password or the original sign-in method.',
+            [{ text: 'OK', style: 'cancel' }]
+          );
+          return;
+        }
+
+        logger.warn('[Apple Auth] Authentication failed');
+        Alert.alert('Apple Sign-In Failed', getUserFriendlyErrorMessage(new ApiError(apiMessage, response.status)));
+        return;
+      }
+
+      await completeAuthSuccess(data, 'Login successful!');
+    } catch (error: any) {
+      // User cancelled the Apple sheet — no error alert needed
+      if (error instanceof AppleSignInCancelledError) {
+        return;
+      }
+      Alert.alert('Apple Sign-In Failed', getAppleErrorMessage(error));
+    } finally {
+      setIsAppleSubmitting(false);
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -642,28 +724,54 @@ export default function LoginScreen({ navigation, route, onAuthSuccess }: LoginS
               )}
             </TouchableOpacity>
 
-            <TouchableOpacity
-              activeOpacity={0.9}
-              onPress={handleGoogleContinue}
-              disabled={isAuthBusy || Boolean(googleConfigIssue)}
-              style={[
-                styles.secondaryButton,
-                {
-                  backgroundColor: palette.secondaryBar,
-                  borderColor: palette.secondaryBorder,
-                },
-                isAuthBusy || googleConfigIssue ? styles.primaryDisabled : null,
-              ]}
-            >
-              {isGoogleSubmitting ? (
-                <ActivityIndicator color={palette.secondaryText} />
-              ) : (
-                <>
-                  <MaterialIcons name="g-translate" size={20} color={palette.secondaryText} />
-                  <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Continue with Google</Text>
-                </>
-              )}
-            </TouchableOpacity>
+            <View style={styles.socialDivider}>
+              <View style={[styles.socialDividerLine, { backgroundColor: palette.inputBorder }]} />
+              <Text style={[styles.socialDividerText, { color: palette.placeholder }]}>or continue with</Text>
+              <View style={[styles.socialDividerLine, { backgroundColor: palette.inputBorder }]} />
+            </View>
+
+            <View style={styles.socialSection}>
+              <TouchableOpacity
+                activeOpacity={0.9}
+                onPress={handleGoogleContinue}
+                disabled={isAuthBusy || Boolean(googleConfigIssue)}
+                style={[
+                  styles.secondaryButton,
+                  {
+                    backgroundColor: palette.secondaryBar,
+                    borderColor: palette.secondaryBorder,
+                  },
+                  isAuthBusy || googleConfigIssue ? styles.primaryDisabled : null,
+                ]}
+              >
+                {isGoogleSubmitting ? (
+                  <ActivityIndicator color={palette.secondaryText} />
+                ) : (
+                  <>
+                    <MaterialIcons name="g-translate" size={20} color={palette.secondaryText} />
+                    <Text style={[styles.secondaryButtonText, { color: palette.secondaryText }]}>Continue with Google</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+
+              {Platform.OS === 'ios' && appleAvailable ? (
+                <View style={[styles.appleButtonContainer, isAuthBusy ? styles.primaryDisabled : null]}>
+                  {isAppleSubmitting ? (
+                    <View style={styles.appleButtonLoadingWrap}>
+                      <ActivityIndicator color="#FFFFFF" />
+                    </View>
+                  ) : (
+                    <AppleAuthentication.AppleAuthenticationButton
+                      buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
+                      buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
+                      cornerRadius={18}
+                      style={styles.appleNativeButton}
+                      onPress={handleAppleContinue}
+                    />
+                  )}
+                </View>
+              ) : null}
+            </View>
 
             {googleConfigIssue ? (
               <Text style={[styles.googleConfigHint, { color: palette.helperText }]}>Google Sign-In requires EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID and EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID in environment config.</Text>
@@ -723,14 +831,14 @@ const styles = StyleSheet.create({
   topSection: {
     alignItems: 'center',
     marginTop: 0,
-    marginBottom: 6,
+    marginBottom: 10,
   },
   logo: {
     marginTop: 0,
   },
   tagline: {
     marginTop: 0,
-    marginBottom: 6,
+    marginBottom: 10,
     fontSize: 13,
     fontWeight: '600',
     textAlign: 'center',
@@ -738,7 +846,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   formSection: {
-    marginTop: 0,
+    marginTop: 4,
   },
   stackGap: {
     height: 8,
@@ -775,15 +883,15 @@ const styles = StyleSheet.create({
   },
   forgotRow: {
     alignItems: 'flex-end',
-    marginTop: 4,
-    marginBottom: 6,
+    marginTop: 6,
+    marginBottom: 8,
   },
   forgotText: {
     fontSize: 13,
     fontWeight: '600',
   },
   primaryButton: {
-    marginTop: 2,
+    marginTop: 4,
     width: '100%',
     height: 52,
     borderRadius: 18,
@@ -813,7 +921,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 3,
   },
   secondaryButton: {
-    marginTop: 10,
+    marginTop: 0,
     minHeight: 50,
     borderRadius: 18,
     borderWidth: 1,
@@ -831,6 +939,27 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
+  appleButtonContainer: {
+    marginTop: 0,
+    height: 50,
+  },
+  appleNativeButton: {
+    width: '100%',
+    height: '100%',
+  },
+  appleButtonLoadingWrap: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 18,
+    backgroundColor: '#000000',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.14,
+    shadowRadius: 10,
+    elevation: 4,
+  },
   googleConfigHint: {
     marginTop: 8,
     fontSize: 12,
@@ -838,10 +967,30 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 16,
   },
+  socialDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 16,
+    marginBottom: 12,
+    gap: 10,
+  },
+  socialDividerLine: {
+    flex: 1,
+    height: 1,
+    borderRadius: 1,
+  },
+  socialDividerText: {
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 0.4,
+  },
+  socialSection: {
+    gap: 8,
+  },
   toggleContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginTop: 14,
+    marginTop: 18,
     paddingHorizontal: 8,
   },
   toggleText: {

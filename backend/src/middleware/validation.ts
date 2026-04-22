@@ -105,6 +105,25 @@ export const googleAuthValidation = validate({
     .strict(),
 });
 
+export const appleAuthValidation = validate({
+  body: z
+    .object({
+      idToken: z.string().trim().min(1, 'idToken is required'),
+      user: z
+        .object({
+          name: z
+            .object({
+              firstName: z.string().trim().optional(),
+              lastName: z.string().trim().optional(),
+            })
+            .optional(),
+          email: z.string().trim().toLowerCase().email('Invalid email format').optional(),
+        })
+        .optional(),
+    })
+    .strict(),
+});
+
 export const forgotPasswordValidation = validate({
   body: z
     .object({
@@ -169,8 +188,8 @@ export const createFocusSessionValidation = validate({
 export const updateProfileValidation = validate({
   body: z
     .object({
-      firstName: z.string().trim().min(1, 'First name cannot be empty').max(100).optional(),
-      lastName: z.string().trim().min(1, 'Last name cannot be empty').max(100).optional(),
+      firstName: z.union([z.string().trim().min(1, 'First name cannot be empty').max(100), z.null()]).optional(),
+      lastName: z.union([z.string().trim().min(1, 'Last name cannot be empty').max(100), z.null()]).optional(),
       timezone: z.string().trim().min(1, 'timezone cannot be empty').max(100).optional(),
     })
     .strict()

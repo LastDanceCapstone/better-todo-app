@@ -3,7 +3,7 @@
     "name": "Prioritize",
     "slug": "mobile",
     "scheme": "prioritize",
-    "version": "1.1.1",
+    "version": "1.1.17",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -16,8 +16,11 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.london.prioritize",
+      "usesAppleSignIn": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
+        "NSCameraUsageDescription": "Prioritize uses your camera so you can take a profile photo or attach an image to a task, such as adding a photo to a to-do item.",
+        "NSPhotoLibraryUsageDescription": "Prioritize accesses your photo library so you can choose a profile picture or attach an existing image to a task, such as selecting a saved photo for a to-do item.",
         "NSMicrophoneUsageDescription": "Prioritize uses your microphone so you can describe tasks with your voice.",
         "NSCalendarsUsageDescription": "Prioritize uses Calendar access to sync your due-date tasks to your Apple Calendar and keep those events updated.",
         "NSUserNotificationUsageDescription": "Prioritize sends reminders for upcoming and overdue tasks, plus optional daily summaries, so you can stay on track."
@@ -38,6 +41,7 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      "expo-apple-authentication",
       "expo-web-browser",
       "expo-notifications",
       "@sentry/react-native/expo",

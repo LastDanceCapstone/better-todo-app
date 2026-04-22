@@ -27,6 +27,35 @@ jest.mock('expo-secure-store', () => ({
   deleteItemAsync: jest.fn(),
 }));
 
+jest.mock('@react-native-google-signin/google-signin', () => ({
+  GoogleSignin: {
+    configure: jest.fn(),
+    signIn: jest.fn(),
+    signOut: jest.fn(async () => undefined),
+  },
+  isErrorWithCode: jest.fn(() => false),
+  isSuccessResponse: jest.fn(() => false),
+  statusCodes: {
+    SIGN_IN_CANCELLED: 'SIGN_IN_CANCELLED',
+    IN_PROGRESS: 'IN_PROGRESS',
+    PLAY_SERVICES_NOT_AVAILABLE: 'PLAY_SERVICES_NOT_AVAILABLE',
+  },
+}));
+
+jest.mock('expo-apple-authentication', () => {
+  const React = require('react');
+  const { View } = require('react-native');
+
+  return {
+    AppleAuthenticationButton: ({ children }: any) => React.createElement(View, null, children),
+    AppleAuthenticationButtonType: { CONTINUE: 0 },
+    AppleAuthenticationButtonStyle: { BLACK: 0 },
+    AppleAuthenticationScope: { FULL_NAME: 0, EMAIL: 1 },
+    isAvailableAsync: jest.fn(async () => true),
+    signInAsync: jest.fn(),
+  };
+});
+
 jest.mock('expo-notifications', () => ({
   getPermissionsAsync: jest.fn(async () => ({
     granted: false,

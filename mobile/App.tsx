@@ -1,6 +1,6 @@
 // App.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, AppState, AppStateStatus, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Alert, Animated, AppState, AppStateStatus, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import * as Linking from 'expo-linking';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -26,14 +26,20 @@ import AccountSettingsScreen from './src/screens/AccountSettingsScreen';
 import GeneralSettingsScreen from './src/screens/GeneralSettingsScreen';
 import AnalyticsScreen from './src/screens/AnalyticsScreen';
 import FocusModeScreen from './src/screens/FocusModeScreen';
-import { ApiError, getAuthToken, getTaskById, getTasks, markNotificationAsRead } from './src/config/api';
+import { ApiError, getAuthToken, getTaskById, getTasks, getUserProfile, markNotificationAsRead } from './src/config/api';
+import { signOutGoogle } from './src/config/googleSignIn';
+import { signOutApple } from './src/config/appleSignIn';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   configureNotificationPresentation,
+  disconnectCurrentPushInstallation,
   syncPushNotificationRegistration,
 } from './src/services/pushNotifications';
 import { clearLocalAuthSession } from './src/utils/session';
 import { logger } from './src/utils/logger';
+import { AuthProvider, useAuth } from './src/auth/AuthContext';
+import { AuthExitReason, beginAuthExit, clearAuthExitState, isAuthExitInProgress } from './src/auth/authExitState';
+import { isUnauthorizedApiError } from './src/auth/unauthorizedHandler';
 
 const APP_CALENDAR_SYNC_ENABLED_KEY = 'prioritizeCalendarAppSyncEnabled';
 const CALENDAR_RECONCILE_INTERVAL_MS = 5 * 60 * 1000;
@@ -139,7 +145,7 @@ const AnimatedTabIcon = ({
   );
 };
 
-const TabNavigator = ({ onLogout }: { onLogout: () => void }) => {
+const TabNavigator = ({ onLogout, onSessionExpired }: { onLogout: () => Promise<void>; onSessionExpired: () => Promise<void> }) => {
   const { colors } = useTheme();
   const { currentTheme } = useThemePreference();
   const insets = useSafeAreaInsets();
@@ -234,11 +240,15 @@ const TabNavigator = ({ onLogout }: { onLogout: () => void }) => {
         ),
       })}
     >
-      <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Calendar" component={CalendarScreen} />
+      <Tab.Screen name="Home">
+        {(props) => <HomeScreen {...props} onSessionExpired={onSessionExpired} />}
+      </Tab.Screen>
+      <Tab.Screen name="Calendar">
+        {(props) => <CalendarScreen {...props} onSessionExpired={onSessionExpired} />}
+      </Tab.Screen>
       <Tab.Screen
         name="Create"
-        component={CreateTaskScreen}
+        children={(props) => <CreateTaskScreen {...props} onSessionExpired={onSessionExpired} />}
         options={{
           tabBarLabel: () => null,
           tabBarItemStyle: {
@@ -258,9 +268,11 @@ const TabNavigator = ({ onLogout }: { onLogout: () => void }) => {
           ),
         }}
       />
-      <Tab.Screen name="Focus" component={FocusModeScreen} />
+      <Tab.Screen name="Focus">
+        {(props) => <FocusModeScreen {...props} onSessionExpired={onSessionExpired} />}
+      </Tab.Screen>
       <Tab.Screen name="Account">
-        {(props) => <AccountDetailsScreen {...props} onLogout={onLogout} />}
+        {(props) => <AccountDetailsScreen {...props} onLogout={onLogout} onSessionExpired={onSessionExpired} />}
       </Tab.Screen>
     </Tab.Navigator>
   );
@@ -268,6 +280,7 @@ const TabNavigator = ({ onLogout }: { onLogout: () => void }) => {
 
 export const AppNavigator = () => {
   const { navigationTheme } = useThemePreference();
+  const { clearAuthenticatedUser, setAuthenticatedUser, user } = useAuth();
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isNavigationReady, setIsNavigationReady] = useState(false);
@@ -337,13 +350,91 @@ export const AppNavigator = () => {
     })();
   }, [navigateFromNotificationPayload]);
 
-  const forceLogout = useCallback(async () => {
+  const finishAuthExitToLogin = useCallback(async () => {
+    logger.info('[AuthDiag] finishAuthExitToLogin: clearing local auth session and auth context');
     await clearLocalAuthSession();
+    await clearAuthenticatedUser();
     setIsAuthenticated(false);
-  }, []);
+    logger.info('[AuthDiag] finishAuthExitToLogin: auth state set to logged-out');
+  }, [clearAuthenticatedUser]);
+
+  const resolveManualLogoutReason = useCallback((): AuthExitReason => {
+    if (user?.authProvider === 'google') {
+      return 'manual-google-logout';
+    }
+
+    if (user?.authProvider === 'apple') {
+      return 'manual-apple-logout';
+    }
+
+    return 'manual-email-logout';
+  }, [user?.authProvider]);
+
+  const runProviderSignOut = useCallback(async () => {
+    if (user?.authProvider === 'google') {
+      logger.info('[AuthDiag] provider sign-out started: google');
+      await signOutGoogle();
+      logger.info('[AuthDiag] provider sign-out finished: google');
+      return;
+    }
+
+    if (user?.authProvider === 'apple') {
+      logger.info('[AuthDiag] provider sign-out started: apple');
+      await signOutApple();
+      logger.info('[AuthDiag] provider sign-out finished: apple');
+    }
+  }, [user?.authProvider]);
+
+  const forceLogout = useCallback(async () => {
+    const reason = resolveManualLogoutReason();
+    logger.info(`[AuthDiag] manual logout requested (reason=${reason})`);
+    const started = beginAuthExit(reason);
+    if (!started) {
+      logger.info('[AuthDiag] manual logout ignored because auth-exit already in progress');
+      return;
+    }
+
+    try {
+      await runProviderSignOut();
+    } catch {
+      logger.warn('[AuthDiag] provider sign-out failed; continuing local logout');
+    }
+
+    try {
+      await disconnectCurrentPushInstallation();
+    } catch {
+      // disconnectCurrentPushInstallation already logs internally.
+    }
+
+    await finishAuthExitToLogin();
+    logger.info('[AuthDiag] manual logout completed');
+  }, [finishAuthExitToLogin, resolveManualLogoutReason, runProviderSignOut]);
+
+  const handleUnexpectedSessionExpiry = useCallback(async (source = 'unknown', reason: AuthExitReason = 'session-expired') => {
+    logger.warn(`[AuthDiag] unexpected session expiry handler requested by ${source} (reason=${reason})`);
+    const started = beginAuthExit(reason);
+    if (!started) {
+      logger.info('[AuthDiag] session-expired handler ignored because auth-exit already in progress');
+      return;
+    }
+
+    await finishAuthExitToLogin();
+
+    requestAnimationFrame(() => {
+      Alert.alert('Session expired', 'Please log in again.');
+    });
+    logger.warn('[AuthDiag] session-expired alert shown');
+  }, [finishAuthExitToLogin]);
 
   const handleRequireReauth = useCallback(async (params?: { email?: string; message?: string }) => {
-    await forceLogout();
+    logger.info('[AuthDiag] reauth required flow started');
+    const started = beginAuthExit('reauth-required');
+    if (!started) {
+      logger.info('[AuthDiag] reauth flow ignored because auth-exit already in progress');
+      return;
+    }
+
+    await finishAuthExitToLogin();
     requestAnimationFrame(() => {
       navigationRef.current?.resetRoot({
         index: 0,
@@ -358,23 +449,49 @@ export const AppNavigator = () => {
         ],
       });
     });
-  }, [forceLogout]);
+  }, [finishAuthExitToLogin]);
 
   const validateSession = useCallback(async (): Promise<boolean> => {
+    if (isAuthExitInProgress()) {
+      logger.info('[AuthDiag] validateSession skipped because auth-exit is in progress');
+      return false;
+    }
+
     const token = await getAuthToken();
     if (!token) {
+      logger.info('[AuthDiag] validateSession found no token; staying logged out');
+      await clearAuthenticatedUser();
       setIsAuthenticated(false);
       return false;
     }
 
     try {
-      await getTasks();
+      const [profile] = await Promise.all([getUserProfile(), getTasks()]);
+      // Guard: if a logout/auth-exit began while the async API calls were in-flight,
+      // do NOT restore auth state and do NOT clear the exit flag. Clearing the flag
+      // here would allow subsequent 401 errors to fire the session-expired popup
+      // during an active manual logout — which is the root cause of that spurious popup.
+      if (isAuthExitInProgress()) {
+        logger.info('[AuthDiag] validateSession: auth-exit started during API calls; aborting to preserve exit flag');
+        return false;
+      }
+      await setAuthenticatedUser(profile);
+      // clearAuthExitState() is intentionally NOT called here. Auth exit state is
+      // cleared exclusively by onAuthSuccess (login/verify-email handlers) in App.tsx,
+      // which is the only safe entry point after a full auth-exit cycle completes.
+      logger.info('[AuthDiag] validateSession succeeded');
       return true;
-    } catch {
-      await forceLogout();
-      return false;
+    } catch (error: unknown) {
+      if (isUnauthorizedApiError(error)) {
+        logger.warn('[AuthDiag] validateSession failed with unauthorized error');
+        await handleUnexpectedSessionExpiry('validateSession', 'invalid-token');
+        return false;
+      }
+
+      logger.warn('[AuthDiag] validateSession failed with non-auth error; preserving authenticated state');
+      return true;
     }
-  }, [forceLogout]);
+  }, [clearAuthenticatedUser, handleUnexpectedSessionExpiry, setAuthenticatedUser]);
 
   useEffect(() => {
     const bootstrapSession = async () => {
@@ -383,14 +500,20 @@ export const AppNavigator = () => {
         setIsAuthenticated(validSession);
       } catch (error) {
         logger.error('Failed to restore auth session');
-        await forceLogout();
+        if (isUnauthorizedApiError(error)) {
+          await handleUnexpectedSessionExpiry('bootstrapSession', 'auth-bootstrap-failure');
+          return;
+        }
+
+        const token = await getAuthToken();
+        setIsAuthenticated(Boolean(token));
       } finally {
         setIsBootstrapping(false);
       }
     };
 
     bootstrapSession();
-  }, [forceLogout, validateSession]);
+  }, [handleUnexpectedSessionExpiry, validateSession]);
 
   useEffect(() => {
     if (isBootstrapping || !isAuthenticated) {
@@ -558,6 +681,54 @@ export const AppNavigator = () => {
     };
   }, [isAuthenticated, isBootstrapping, validateSession]);
 
+  const handleTabSessionExpired = useCallback(
+    () => handleUnexpectedSessionExpiry('tab-screen', 'unauthorized-response'),
+    [handleUnexpectedSessionExpiry],
+  );
+
+  const handleTaskDetailsUnauthorized = useCallback(
+    () => handleUnexpectedSessionExpiry('task-details', 'unauthorized-response'),
+    [handleUnexpectedSessionExpiry],
+  );
+
+  const handleNotificationCenterSessionExpired = useCallback(
+    () => handleUnexpectedSessionExpiry('notification-center', 'unauthorized-response'),
+    [handleUnexpectedSessionExpiry],
+  );
+
+  const handleNotificationSettingsSessionExpired = useCallback(
+    () => handleUnexpectedSessionExpiry('notification-settings', 'unauthorized-response'),
+    [handleUnexpectedSessionExpiry],
+  );
+
+  const handleAccountSettingsSessionExpired = useCallback(
+    () => handleUnexpectedSessionExpiry('account-settings', 'unauthorized-response'),
+    [handleUnexpectedSessionExpiry],
+  );
+
+  const handleAnalyticsSessionExpired = useCallback(
+    () => handleUnexpectedSessionExpiry('analytics', 'unauthorized-response'),
+    [handleUnexpectedSessionExpiry],
+  );
+
+  const handleLoginAuthSuccess = useCallback(async (authenticatedUser?: any) => {
+    clearAuthExitState();
+    await setAuthenticatedUser(authenticatedUser ?? null);
+    setIsAuthenticated(true);
+  }, [setAuthenticatedUser]);
+
+  const handleVerifyEmailAuthSuccess = useCallback(async (authenticatedUser?: any) => {
+    clearAuthExitState();
+    await setAuthenticatedUser(authenticatedUser ?? null);
+    setIsAuthenticated(true);
+    requestAnimationFrame(() => {
+      navigationRef.current?.resetRoot({
+        index: 0,
+        routes: [{ name: 'Main', params: { screen: 'Home' } }],
+      });
+    });
+  }, [setAuthenticatedUser]);
+
   if (isBootstrapping) {
     return (
       <View
@@ -593,9 +764,8 @@ export const AppNavigator = () => {
             <RootStack.Screen name="Main">
               {() => (
                 <TabNavigator
-                  onLogout={() => {
-                    setIsAuthenticated(false);
-                  }}
+                  onLogout={forceLogout}
+                  onSessionExpired={handleTabSessionExpired}
                 />
               )}
             </RootStack.Screen>
@@ -603,27 +773,45 @@ export const AppNavigator = () => {
               {(props) => (
                 <TaskDetailsScreen
                   {...props}
-                  onUnauthorized={() => {
-                    setIsAuthenticated(false);
-                  }}
+                  onUnauthorized={handleTaskDetailsUnauthorized}
                 />
               )}
             </RootStack.Screen>
             <RootStack.Screen name="CalendarSync" component={CalendarSettingsScreen} />
-            <RootStack.Screen name="Notifications" component={NotificationCenterScreen} />
-            <RootStack.Screen name="NotificationSettings" component={NotificationSettingsScreen} />
+            <RootStack.Screen name="Notifications">
+              {(props) => (
+                <NotificationCenterScreen
+                  {...props}
+                  onSessionExpired={handleNotificationCenterSessionExpired}
+                />
+              )}
+            </RootStack.Screen>
+            <RootStack.Screen name="NotificationSettings">
+              {(props) => (
+                <NotificationSettingsScreen
+                  {...props}
+                  onSessionExpired={handleNotificationSettingsSessionExpired}
+                />
+              )}
+            </RootStack.Screen>
             <RootStack.Screen name="AccountSettings">
               {(props) => (
                 <AccountSettingsScreen
                   {...props}
-                  onLogout={() => {
-                    setIsAuthenticated(false);
-                  }}
+                  onLogout={forceLogout}
+                  onSessionExpired={handleAccountSettingsSessionExpired}
                 />
               )}
             </RootStack.Screen>
             <RootStack.Screen name="GeneralSettings" component={GeneralSettingsScreen} />
-            <RootStack.Screen name="Analytics" component={AnalyticsScreen} />
+            <RootStack.Screen name="Analytics">
+              {(props) => (
+                <AnalyticsScreen
+                  {...props}
+                  onSessionExpired={handleAnalyticsSessionExpired}
+                />
+              )}
+            </RootStack.Screen>
             <RootStack.Screen
               name="ResetPassword"
             >
@@ -643,9 +831,7 @@ export const AppNavigator = () => {
               {(props) => (
                 <LoginScreen
                   {...props}
-                  onAuthSuccess={() => {
-                    setIsAuthenticated(true);
-                  }}
+                  onAuthSuccess={handleLoginAuthSuccess}
                 />
               )}
             </RootStack.Screen>
@@ -663,15 +849,7 @@ export const AppNavigator = () => {
               {(props) => (
                 <VerifyEmailScreen
                   {...props}
-                  onAuthSuccess={() => {
-                    setIsAuthenticated(true);
-                    requestAnimationFrame(() => {
-                      navigationRef.current?.resetRoot({
-                        index: 0,
-                        routes: [{ name: 'Main', params: { screen: 'Home' } }],
-                      });
-                    });
-                  }}
+                  onAuthSuccess={handleVerifyEmailAuthSuccess}
                 />
               )}
             </RootStack.Screen>
@@ -686,7 +864,9 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        <AppNavigator />
+        <AuthProvider>
+          <AppNavigator />
+        </AuthProvider>
       </ThemeProvider>
     </SafeAreaProvider>
   );

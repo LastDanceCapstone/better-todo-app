@@ -36,6 +36,8 @@ import { logger } from '../utils/logger';
 import { DEFAULT_PRIORITY_KEY } from './GeneralSettingsScreen';
 import AppInput from '../components/AppInput';
 import AppButton from '../components/AppButton';
+import { isAuthExitInProgress } from '../auth/authExitState';
+import { handleUnauthorizedIfNeeded } from '../auth/unauthorizedHandler';
 
 type Priority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
 type Status = 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
@@ -125,7 +127,7 @@ const PRIORITY_META: Record<string, { icon: keyof typeof MaterialIcons.glyphMap;
   URGENT: { icon: 'priority-high', color: '#DC2626' },
 };
 
-export default function CreateTaskScreen({ navigation, route }: any) {
+export default function CreateTaskScreen({ navigation, route, onSessionExpired }: any) {
   const { colors } = useTheme();
   const { currentTheme } = useThemePreference();
   const isDark = currentTheme === 'dark';
@@ -390,6 +392,11 @@ export default function CreateTaskScreen({ navigation, route }: any) {
       setAiError(null);
       showFormNotice('AI suggestions applied. Review and create when ready.', 1500);
     } catch (error: any) {
+      if (await handleUnauthorizedIfNeeded({ error, source: 'CreateTaskScreen.handleAiAssistParse', onSessionExpired })) {
+        closeAiAssistModal();
+        return;
+      }
+
       if (error instanceof ApiError) {
         if (error.status === 422 && error.issues?.length) {
           setAiError(`Could not parse task clearly:\n• ${error.issues.join('\n• ')}`);
@@ -492,6 +499,10 @@ export default function CreateTaskScreen({ navigation, route }: any) {
       setAiInput(transcript);
       showFormNotice('Voice input ready. Review, edit, then tap Parse.', 1500);
     } catch (error: unknown) {
+      if (await handleUnauthorizedIfNeeded({ error, source: 'CreateTaskScreen.stopVoiceRecordingAndTranscribe', onSessionExpired })) {
+        return;
+      }
+
       setAiError(getUserFriendlyErrorMessage(error, 'Transcription failed. Please try again.'));
     } finally {
       setIsTranscribing(false);
@@ -756,8 +767,9 @@ export default function CreateTaskScreen({ navigation, route }: any) {
     } catch (error) {
       if (error instanceof ApiError) {
         if (error.status === 401) {
-          Alert.alert('Session Expired', 'Please log in again.');
-          navigation.replace('Login');
+          if (!isAuthExitInProgress()) {
+            await onSessionExpired?.();
+          }
         } else {
           Alert.alert('Error', getUserFriendlyErrorMessage(error, 'Failed to create task.'));
         }

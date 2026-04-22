@@ -22,6 +22,7 @@ import * as Haptics from 'expo-haptics';
 import ScreenWrapper from '../components/ScreenWrapper';
 import FocusTimerRing from '../components/FocusTimerRing';
 import { getTasks, getUserFriendlyErrorMessage, type Task, recordFocusSession, updateTask } from '../config/api';
+import { handleUnauthorizedIfNeeded } from '../auth/unauthorizedHandler';
 import { useTheme, useThemePreference } from '../theme';
 import {
   getFocusNotificationSuppressionEnabled,
@@ -97,7 +98,7 @@ const normalizeSessionMinutes = (value: number): number => {
   return Math.min(MAX_SESSION_MINUTES, Math.max(MIN_SESSION_MINUTES, stepped));
 };
 
-export default function FocusModeScreen({ navigation }: any) {
+export default function FocusModeScreen({ navigation, onSessionExpired }: any) {
   const { colors } = useTheme();
   const { currentTheme } = useThemePreference();
   const isDark = currentTheme === 'dark';
@@ -161,6 +162,10 @@ export default function FocusModeScreen({ navigation }: any) {
       setTasks(fetched);
       setScreenError(null);
     } catch (error: unknown) {
+      if (await handleUnauthorizedIfNeeded({ error, source: 'FocusModeScreen.loadTasks', onSessionExpired })) {
+        return;
+      }
+
       const message = getUserFriendlyErrorMessage(error, 'Failed to load tasks.');
       setScreenError(message);
       if (tasks.length > 0) {
@@ -266,9 +271,13 @@ export default function FocusModeScreen({ navigation }: any) {
         completionEventId: `${sessionTaskId}:${Date.now()}`,
       });
     } catch (error: unknown) {
+      if (await handleUnauthorizedIfNeeded({ error, source: 'FocusModeScreen.completeCurrentFocusTask', onSessionExpired })) {
+        return;
+      }
+
       Alert.alert('Update failed', getUserFriendlyErrorMessage(error, 'Could not update task status.'));
     }
-  }, [loadTasks, navigation, sessionTaskId]);
+  }, [loadTasks, navigation, onSessionExpired, sessionTaskId]);
 
   const captureFocusSession = useCallback(async (options: { completed: boolean; interrupted: boolean }) => {
     if (!sessionStartedAt) {

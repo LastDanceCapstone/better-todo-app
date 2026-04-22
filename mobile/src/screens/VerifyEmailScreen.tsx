@@ -75,7 +75,7 @@ export default function VerifyEmailScreen({ route, navigation, onAuthSuccess }: 
       }
 
       if (onAuthSuccess) {
-        onAuthSuccess();
+        await onAuthSuccess(response.user);
         return;
       }
 

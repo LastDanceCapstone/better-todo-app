@@ -21,36 +21,9 @@ import {
   ProductivityAnalytics,
 } from '../config/api';
 import { useTheme } from '../theme';
+import { handleUnauthorizedIfNeeded } from '../auth/unauthorizedHandler';
 
 const PERIOD_OPTIONS: AnalyticsPeriod[] = ['day', 'week'];
-
-const STATUS_ORDER: Array<keyof ProductivityAnalytics['tasksByStatus']> = [
-  'TODO',
-  'IN_PROGRESS',
-  'COMPLETED',
-  'CANCELLED',
-];
-
-const PRIORITY_ORDER: Array<keyof ProductivityAnalytics['tasksByPriority']> = [
-  'LOW',
-  'MEDIUM',
-  'HIGH',
-  'URGENT',
-];
-
-const STATUS_LABELS: Record<keyof ProductivityAnalytics['tasksByStatus'], string> = {
-  TODO: 'To Do',
-  IN_PROGRESS: 'In Progress',
-  COMPLETED: 'Completed',
-  CANCELLED: 'Cancelled',
-};
-
-const PRIORITY_LABELS: Record<keyof ProductivityAnalytics['tasksByPriority'], string> = {
-  LOW: 'Low',
-  MEDIUM: 'Medium',
-  HIGH: 'High',
-  URGENT: 'Urgent',
-};
 
 const chartHeight = 180;
 const chartPadding = { left: 34, right: 10, top: 16, bottom: 26 };
@@ -117,7 +90,78 @@ const getInsight = (analytics: ProductivityAnalytics): string => {
   return 'Your completion rate is low. Try creating fewer tasks and closing work daily.';
 };
 
-export default function AnalyticsScreen({ navigation }: any) {
+const getEncouragement = (
+  analytics: ProductivityAnalytics,
+  trendData: { createdCounts: number[]; completedCounts: number[] },
+): string => {
+  const createdSum = trendData.createdCounts.reduce((acc, value) => acc + value, 0);
+  const completedSum = trendData.completedCounts.reduce((acc, value) => acc + value, 0);
+  const rate = analytics.overview.completionRate;
+  const overdueCount = analytics.overdue.overdueCount;
+
+  if (completedSum === 0 && createdSum === 0) {
+    return 'Once tasks start moving, this screen will turn into your weekly confidence check-in.';
+  }
+
+  if (rate >= 80 && overdueCount === 0) {
+    return 'Excellent execution. You are turning plans into finished work with very little drag.';
+  }
+
+  if (rate >= 60) {
+    return 'Solid momentum. Keep the daily finish habit and your completion pace will keep climbing.';
+  }
+
+  if (rate >= 35) {
+    return 'Progress is building. Closing one more task per session will compound quickly.';
+  }
+
+  return 'Momentum is still forming. Focus on a smaller active list and aim for one clear finish today.';
+};
+
+const computeStreakStats = (completedCounts: number[]) => {
+  const totalPeriods = completedCounts.length;
+  const completedPeriods = completedCounts.filter((count) => count > 0).length;
+  const hasActivity = completedPeriods > 0;
+
+  let currentStreak = 0;
+  for (let i = completedCounts.length - 1; i >= 0; i -= 1) {
+    if (completedCounts[i] > 0) {
+      currentStreak += 1;
+    } else {
+      break;
+    }
+  }
+
+  let bestStreak = 0;
+  let running = 0;
+  completedCounts.forEach((count) => {
+    if (count > 0) {
+      running += 1;
+      if (running > bestStreak) {
+        bestStreak = running;
+      }
+    } else {
+      running = 0;
+    }
+  });
+
+  const recentWindow = completedCounts.slice(-7).map((count) => count > 0);
+  const latestCompleted = completedCounts.length > 0 && completedCounts[completedCounts.length - 1] > 0;
+  const consistencyRate = totalPeriods === 0 ? 0 : (completedPeriods / totalPeriods) * 100;
+
+  return {
+    hasActivity,
+    totalPeriods,
+    completedPeriods,
+    currentStreak,
+    bestStreak,
+    recentWindow,
+    latestCompleted,
+    consistencyRate,
+  };
+};
+
+export default function AnalyticsScreen({ navigation, onSessionExpired }: any) {
   const { colors } = useTheme();
   const screenWidth = Dimensions.get('window').width;
   const chartWidth = screenWidth - 56;
@@ -140,13 +184,17 @@ export default function AnalyticsScreen({ navigation }: any) {
       const payload = await getProductivityAnalytics({ period });
       setAnalytics(payload);
     } catch (err) {
+      if (await handleUnauthorizedIfNeeded({ error: err, source: 'AnalyticsScreen.loadAnalytics', onSessionExpired })) {
+        return;
+      }
+
       const message = err instanceof ApiError ? err.message : 'Could not load analytics right now.';
       setError(message);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [period]);
+  }, [onSessionExpired, period]);
 
   useFocusEffect(
     useCallback(() => {
@@ -191,6 +239,8 @@ export default function AnalyticsScreen({ navigation }: any) {
       onTimeTotal,
     };
   }, [analytics]);
+
+  const streakStats = useMemo(() => computeStreakStats(trendData.completedCounts), [trendData.completedCounts]);
 
   const renderHeader = () => (
     <View style={[styles.header, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
@@ -277,7 +327,19 @@ export default function AnalyticsScreen({ navigation }: any) {
           {formatDateWindow(analytics.range.startDate, analytics.range.endDate)}
         </Text>
 
-        <SectionCard title="Overview" subtitle="Am I completing my tasks?" colors={colors}>
+        <View style={[styles.reinforcementCard, { backgroundColor: `${colors.primary}12`, borderColor: `${colors.primary}2B` }]}> 
+          <View style={[styles.reinforcementIconWrap, { backgroundColor: `${colors.primary}1F` }]}> 
+            <MaterialIcons name="insights" size={18} color={colors.primary} />
+          </View>
+          <View style={styles.reinforcementBody}>
+            <Text style={[styles.reinforcementTitle, { color: colors.text }]}>Your momentum snapshot</Text>
+            <Text style={[styles.reinforcementText, { color: colors.mutedText }]}>
+              {getEncouragement(analytics, trendData)}
+            </Text>
+          </View>
+        </View>
+
+        <SectionCard title="Overview" subtitle="How your effort translated into outcomes" colors={colors}>
           <View style={styles.summaryGrid}>
             <KpiCard label="Completion Rate" value={formatPercent(analytics.overview.completionRate)} icon="task-alt" colors={colors} />
             <KpiCard label="Tasks Created" value={String(analytics.overview.totalCreated)} icon="add-chart" colors={colors} />
@@ -295,7 +357,7 @@ export default function AnalyticsScreen({ navigation }: any) {
           </View>
         ) : (
           <>
-            <SectionCard title="Trends" subtitle="What is my workload trend?" colors={colors}>
+            <SectionCard title="Trends" subtitle="Created vs completed over the selected window" colors={colors}>
               <TrendChart
                 created={trendData.created}
                 completed={trendData.completed}
@@ -311,31 +373,69 @@ export default function AnalyticsScreen({ navigation }: any) {
               </View>
             </SectionCard>
 
-            <SectionCard title="Distribution" subtitle="What is my current task mix?" colors={colors}>
-              <Text style={[styles.subsectionTitle, { color: colors.text }]}>By status</Text>
-              {STATUS_ORDER.map((status) => (
-                <DistributionRow
-                  key={status}
-                  label={STATUS_LABELS[status]}
-                  value={analytics.tasksByStatus[status]}
-                  total={Math.max(analytics.overview.totalCreated, 1)}
-                  colors={colors}
-                />
-              ))}
+            <SectionCard title="Consistency Streak" subtitle="A quick pulse of your follow-through" colors={colors}>
+              {streakStats.hasActivity ? (
+                <>
+                  <View style={[styles.streakHero, { backgroundColor: `${colors.primary}10`, borderColor: `${colors.primary}35` }]}> 
+                    <View style={[styles.streakHeroIconWrap, { backgroundColor: `${colors.primary}1F` }]}> 
+                      <MaterialIcons name="local-fire-department" size={18} color={colors.primary} />
+                    </View>
+                    <View style={styles.streakHeroBody}>
+                      <Text style={[styles.streakHeroValue, { color: colors.text }]}>{streakStats.currentStreak}</Text>
+                      <Text style={[styles.streakHeroLabel, { color: colors.mutedText }]}>current streak</Text>
+                    </View>
+                    <View style={[styles.streakStatusPill, { backgroundColor: streakStats.latestCompleted ? `${colors.success}22` : `${colors.border}90` }]}> 
+                      <Text style={[styles.streakStatusText, { color: streakStats.latestCompleted ? colors.success : colors.mutedText }]}> 
+                        {streakStats.latestCompleted ? `On track this ${period}` : `No completion yet this ${period}`}
+                      </Text>
+                    </View>
+                  </View>
 
-              <Text style={[styles.subsectionTitle, { color: colors.text, marginTop: 10 }]}>By priority</Text>
-              {PRIORITY_ORDER.map((priority) => (
-                <DistributionRow
-                  key={priority}
-                  label={PRIORITY_LABELS[priority]}
-                  value={analytics.tasksByPriority[priority]}
-                  total={Math.max(analytics.overview.totalCreated, 1)}
-                  colors={colors}
-                />
-              ))}
+                  <View style={styles.streakMetaRow}>
+                    <View style={[styles.streakMetaCard, { borderColor: colors.border, backgroundColor: colors.background }]}> 
+                      <Text style={[styles.streakMetaLabel, { color: colors.mutedText }]}>Best streak</Text>
+                      <Text style={[styles.streakMetaValue, { color: colors.text }]}>{streakStats.bestStreak}</Text>
+                    </View>
+                    <View style={[styles.streakMetaCard, { borderColor: colors.border, backgroundColor: colors.background }]}> 
+                      <Text style={[styles.streakMetaLabel, { color: colors.mutedText }]}>Consistency</Text>
+                      <Text style={[styles.streakMetaValue, { color: colors.text }]}>{formatPercent(streakStats.consistencyRate)}</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.streakMiniTrack}>
+                    {streakStats.recentWindow.map((isComplete, index) => (
+                      <View
+                        key={`streak-dot-${index}`}
+                        style={[
+                          styles.streakMiniDot,
+                          {
+                            backgroundColor: isComplete ? colors.primary : `${colors.border}CC`,
+                            borderColor: isComplete ? `${colors.primary}66` : `${colors.border}CC`,
+                          },
+                        ]}
+                      />
+                    ))}
+                  </View>
+                  <Text style={[styles.streakMiniCaption, { color: colors.mutedText }]}>Recent completion consistency</Text>
+                </>
+              ) : (
+                <View style={[styles.streakEmptyState, { backgroundColor: colors.background, borderColor: colors.border }]}> 
+                  <MaterialIcons name="local-fire-department" size={20} color={colors.primary} />
+                  <View style={styles.streakEmptyBody}>
+                    <Text style={[styles.streakEmptyTitle, { color: colors.text }]}>Start your streak</Text>
+                    <Text style={[styles.streakEmptyText, { color: colors.mutedText }]}>Complete a task this {period} to begin building consistency.</Text>
+                  </View>
+                </View>
+              )}
+
+              <Text style={[styles.streakSupportText, { color: colors.mutedText }]}> 
+                {streakStats.hasActivity
+                  ? `Completed in ${streakStats.completedPeriods} of ${streakStats.totalPeriods} recent ${period === 'day' ? 'days' : 'weeks'}.`
+                  : `Your consistency view appears as soon as completions are recorded.`}
+              </Text>
             </SectionCard>
 
-            <SectionCard title="Performance" subtitle="How productive am I over time?" colors={colors}>
+            <SectionCard title="Performance" subtitle="Execution quality and consistency" colors={colors}>
               <View style={styles.performanceRow}>
                 <PerformanceMetric label="Avg completion time" value={formatHours(analytics.productivity.avgCompletionTimeHours)} colors={colors} />
                 <PerformanceMetric label="Completed in range" value={String(analytics.productivity.tasksCompletedInRange)} colors={colors} />
@@ -394,33 +494,6 @@ function KpiCard({
       </View>
       <Text style={[styles.kpiLabel, { color: colors.mutedText }]}>{label}</Text>
       <Text style={[styles.kpiValue, { color: danger ? colors.danger : colors.text }]}>{value}</Text>
-    </View>
-  );
-}
-
-function DistributionRow({
-  label,
-  value,
-  total,
-  colors,
-}: {
-  label: string;
-  value: number;
-  total: number;
-  colors: any;
-}) {
-  const width = Math.round((value / total) * 100);
-  return (
-    <View style={styles.distributionRow}>
-      <View style={styles.distributionHeader}>
-        <Text style={[styles.distributionLabel, { color: colors.text }]}>{label}</Text>
-        <Text style={[styles.distributionMeta, { color: colors.mutedText }]}>
-          {value} ({width}%)
-        </Text>
-      </View>
-      <View style={[styles.progressTrack, { backgroundColor: colors.background }]}> 
-        <View style={[styles.progressFill, { width: `${Math.max(0, Math.min(width, 100))}%`, backgroundColor: colors.primary }]} />
-      </View>
     </View>
   );
 }
@@ -540,18 +613,18 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 48,
+    paddingTop: 14,
+    paddingBottom: 56,
   },
   periodTabs: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 4,
+    marginBottom: 6,
   },
   periodTab: {
     borderWidth: 1,
     borderRadius: 99,
-    paddingVertical: 9,
+    paddingVertical: 10,
     paddingHorizontal: 18,
   },
   periodTabText: {
@@ -560,32 +633,63 @@ const styles = StyleSheet.create({
   },
   windowText: {
     fontSize: 12,
-    marginTop: 10,
-    marginBottom: 14,
+    marginTop: 8,
+    marginBottom: 12,
     letterSpacing: 0.2,
   },
-  card: {
-    borderWidth: StyleSheet.hairlineWidth,
+  reinforcementCard: {
+    borderWidth: 1,
     borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     marginBottom: 14,
-    paddingVertical: 14,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  reinforcementIconWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  reinforcementBody: {
+    flex: 1,
+  },
+  reinforcementTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  reinforcementText: {
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  card: {
+    borderWidth: 1,
+    borderRadius: 18,
+    marginBottom: 14,
+    paddingVertical: 15,
     paddingHorizontal: 14,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
     elevation: 2,
   },
   cardHeader: {
-    marginBottom: 12,
+    marginBottom: 13,
   },
   cardTitle: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '700',
   },
   cardSubtitle: {
     fontSize: 12,
-    marginTop: 2,
+    marginTop: 3,
+    lineHeight: 17,
   },
   summaryGrid: {
     flexDirection: 'row',
@@ -595,8 +699,8 @@ const styles = StyleSheet.create({
   },
   kpiCard: {
     width: '48.5%',
-    borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 13,
+    borderWidth: 1,
     padding: 12,
     minHeight: 96,
   },
@@ -615,7 +719,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   kpiValue: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '700',
   },
   insightText: {
@@ -623,34 +727,109 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 20,
   },
-  subsectionTitle: {
-    fontSize: 13,
+  streakHero: {
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  streakHeroIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  streakHeroBody: {
+    flex: 1,
+  },
+  streakHeroValue: {
+    fontSize: 30,
+    fontWeight: '800',
+    lineHeight: 32,
+  },
+  streakHeroLabel: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+  },
+  streakStatusPill: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  streakStatusText: {
+    fontSize: 11,
     fontWeight: '700',
-    marginBottom: 8,
   },
-  distributionRow: {
-    marginBottom: 8,
-  },
-  distributionHeader: {
+  streakMetaRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 4,
+    marginTop: 9,
+    marginBottom: 10,
+    gap: 8,
   },
-  distributionLabel: {
-    fontSize: 13,
+  streakMetaCard: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 11,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+  },
+  streakMetaLabel: {
+    fontSize: 11,
     fontWeight: '600',
+    marginBottom: 2,
   },
-  distributionMeta: {
+  streakMetaValue: {
+    fontSize: 19,
+    fontWeight: '700',
+  },
+  streakMiniTrack: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  streakMiniDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  streakMiniCaption: {
+    marginTop: 6,
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  streakEmptyState: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  streakEmptyBody: {
+    marginLeft: 10,
+    flex: 1,
+  },
+  streakEmptyTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  streakEmptyText: {
     fontSize: 12,
+    lineHeight: 17,
   },
-  progressTrack: {
-    height: 8,
-    borderRadius: 99,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: 8,
-    borderRadius: 99,
+  streakSupportText: {
+    marginTop: 10,
+    fontSize: 12,
+    lineHeight: 18,
   },
   performanceRow: {
     flexDirection: 'row',
@@ -659,9 +838,9 @@ const styles = StyleSheet.create({
   },
   performanceCard: {
     width: '48.5%',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 10,
-    padding: 10,
+    borderWidth: 1,
+    borderRadius: 11,
+    padding: 11,
   },
   performanceLabel: {
     fontSize: 12,

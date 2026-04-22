@@ -26,9 +26,9 @@ import {
   updateUserAvatar,
   uploadUserAvatarImage,
 } from '../config/api';
-import { disconnectCurrentPushInstallation } from '../services/pushNotifications';
-import { clearLocalAuthSession } from '../utils/session';
 import { logger } from '../utils/logger';
+import { useAuth } from '../auth/AuthContext';
+import { isAuthExitInProgress } from '../auth/authExitState';
 const APP_CALENDAR_STORAGE_KEY = 'prioritizeCalendarAppId';
 const USER_AVATAR_CACHE_KEY = 'userAvatar';
 
@@ -42,23 +42,24 @@ interface SettingRow {
 
 type AccountDetailsScreenProps = {
   navigation: any;
-  onLogout?: () => void;
+  onLogout?: () => Promise<void> | void;
+  onSessionExpired?: () => Promise<void> | void;
 };
 
-export default function AccountDetailsScreen({ navigation, onLogout }: AccountDetailsScreenProps) {
+export default function AccountDetailsScreen({ navigation, onLogout, onSessionExpired }: AccountDetailsScreenProps) {
   const { colors } = useTheme();
   const { themePreference, setThemePreference } = useThemePreference();
-  const [user, setUser] = useState<UserProfile | null>(null);
+  const { user, setAuthenticatedUser } = useAuth();
   const [loading, setLoading] = useState(true);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
   const [avatarUpdating, setAvatarUpdating] = useState(false);
   const [calendarSyncOn, setCalendarSyncOn] = useState(false);
+  const [logoutLoading, setLogoutLoading] = useState(false);
   const sanitizedAvatarUri = avatarUri?.trim() || null;
 
   useEffect(() => {
     fetchUserProfile();
-    requestPermissions();
   }, []);
 
   const loadCalendarSyncStatus = async () => {
@@ -104,16 +105,6 @@ export default function AccountDetailsScreen({ navigation, onLogout }: AccountDe
     }
   };
 
-  const requestPermissions = async () => {
-    // Request camera and media library permissions
-    const { status: cameraStatus } = await ImagePicker.requestCameraPermissionsAsync();
-    const { status: libraryStatus } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    
-    if (cameraStatus !== 'granted' || libraryStatus !== 'granted') {
-      logger.warn('Camera or library permissions not fully granted');
-    }
-  };
-
   const fetchUserProfile = async () => {
     try {
       setLoading(true);
@@ -124,19 +115,13 @@ export default function AccountDetailsScreen({ navigation, onLogout }: AccountDe
         setAvatarLoadFailed(false);
       }
       const profile = await getUserProfile();
-      setUser(profile);
+      await setAuthenticatedUser(profile);
       await cacheAvatar(profile.avatarUrl ?? null);
-      try {
-        const storedUser = await AsyncStorage.getItem('user');
-        if (storedUser) {
-          const parsed = JSON.parse(storedUser);
-          await AsyncStorage.setItem('user', JSON.stringify({ ...parsed, avatarUrl: profile.avatarUrl ?? null }));
-        }
-      } catch {}
     } catch (error: any) {
       if (error instanceof ApiError && error.status === 401) {
-        Alert.alert('Session Expired', 'Please log in again.');
-        handleLogout();
+        if (!isAuthExitInProgress()) {
+          await onSessionExpired?.();
+        }
         return;
       }
 
@@ -189,16 +174,15 @@ export default function AccountDetailsScreen({ navigation, onLogout }: AccountDe
     try {
       setAvatarUpdating(true);
       const updatedUser = await updateUserAvatar(null);
-      setUser(updatedUser);
+      await setAuthenticatedUser(updatedUser);
       await cacheAvatar(null);
-      try {
-        const storedUser = await AsyncStorage.getItem('user');
-        if (storedUser) {
-          const parsed = JSON.parse(storedUser);
-          await AsyncStorage.setItem('user', JSON.stringify({ ...parsed, avatarUrl: null }));
-        }
-      } catch {}
     } catch (error: any) {
+      if (error instanceof ApiError && error.status === 401) {
+        if (!isAuthExitInProgress()) {
+          await onSessionExpired?.();
+        }
+        return;
+      }
       logger.warn('Failed to remove avatar');
       Alert.alert('Error', getUserFriendlyErrorMessage(error, 'Failed to remove avatar. Please try again.'));
     } finally {
@@ -217,16 +201,15 @@ export default function AccountDetailsScreen({ navigation, onLogout }: AccountDe
         fileName: asset.fileName,
         mimeType: asset.mimeType,
       });
-      setUser(updatedUser);
+      await setAuthenticatedUser(updatedUser);
       await cacheAvatar(updatedUser.avatarUrl ?? null);
-      try {
-        const storedUser = await AsyncStorage.getItem('user');
-        if (storedUser) {
-          const parsed = JSON.parse(storedUser);
-          await AsyncStorage.setItem('user', JSON.stringify({ ...parsed, avatarUrl: updatedUser.avatarUrl ?? null }));
-        }
-      } catch {}
     } catch (error: any) {
+      if (error instanceof ApiError && error.status === 401) {
+        if (!isAuthExitInProgress()) {
+          await onSessionExpired?.();
+        }
+        return;
+      }
       logger.warn('Failed to upload avatar');
       setAvatarUri(previousUri);
       Alert.alert('Error', getUserFriendlyErrorMessage(error, 'Failed to upload avatar. Please try again.'));
@@ -255,6 +238,12 @@ export default function AccountDetailsScreen({ navigation, onLogout }: AccountDe
         await uploadAvatarAsset(result.assets[0]);
       }
     } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        if (!isAuthExitInProgress()) {
+          await onSessionExpired?.();
+        }
+        return;
+      }
       logger.warn('Failed to take photo');
       Alert.alert('Error', 'Failed to take photo');
     }
@@ -280,12 +269,22 @@ export default function AccountDetailsScreen({ navigation, onLogout }: AccountDe
         await uploadAvatarAsset(result.assets[0]);
       }
     } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        if (!isAuthExitInProgress()) {
+          await onSessionExpired?.();
+        }
+        return;
+      }
       logger.warn('Failed to pick image');
       Alert.alert('Error', 'Failed to pick image');
     }
   };
 
   const handleLogout = async () => {
+    if (logoutLoading) {
+      return;
+    }
+
     Alert.alert(
       'Log Out',
       'Are you sure you want to log out?',
@@ -296,16 +295,17 @@ export default function AccountDetailsScreen({ navigation, onLogout }: AccountDe
           style: 'destructive',
           onPress: async () => {
             try {
-              await disconnectCurrentPushInstallation();
-              await clearLocalAuthSession();
+              setLogoutLoading(true);
               if (onLogout) {
-                onLogout();
+                await onLogout();
               } else {
                 navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
               }
             } catch (error) {
               logger.warn('Failed to complete logout');
               Alert.alert('Error', 'Failed to log out');
+            } finally {
+              setLogoutLoading(false);
             }
           },
         },
@@ -325,6 +325,12 @@ export default function AccountDetailsScreen({ navigation, onLogout }: AccountDe
     : themePreference === 'light'
       ? 'Light'
       : 'Dark';
+  const displayName = [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || 'User';
+  const emailMeta = user?.isPrivateRelayEmail
+    ? 'Apple private email'
+    : user?.authProvider === 'apple'
+    ? 'Sign in with Apple'
+    : 'Account email';
 
   const handleThemePress = () => {
     if (Platform.OS === 'ios') {
@@ -484,10 +490,9 @@ export default function AccountDetailsScreen({ navigation, onLogout }: AccountDe
             </View>
           </TouchableOpacity>
 
-          <Text style={[styles.userName, { color: colors.text }]}>
-            {user.firstName} {user.lastName}
-          </Text>
+          <Text style={[styles.userName, { color: colors.text }]}>{displayName}</Text>
           <Text style={[styles.userEmail, { color: colors.mutedText }]}>{user.email}</Text>
+          <Text style={[styles.userMeta, { color: colors.mutedText }]}>{emailMeta}</Text>
           <Text style={[styles.memberSince, { color: colors.mutedText }]}>
             Member since {new Date(user.createdAt).toLocaleDateString('en-US', { 
               month: 'long', 
@@ -549,10 +554,15 @@ export default function AccountDetailsScreen({ navigation, onLogout }: AccountDe
             },
           ]}
           onPress={handleLogout}
+          disabled={logoutLoading}
           activeOpacity={0.8}
         >
-          <MaterialIcons name="logout" size={20} color={colors.danger} />
-          <Text style={[styles.logoutButtonText, { color: colors.danger }]}>Log Out</Text>
+          {logoutLoading ? (
+            <ActivityIndicator size="small" color={colors.danger} />
+          ) : (
+            <MaterialIcons name="logout" size={20} color={colors.danger} />
+          )}
+          <Text style={[styles.logoutButtonText, { color: colors.danger }]}>{logoutLoading ? 'Logging Out...' : 'Log Out'}</Text>
         </TouchableOpacity>
 
         <View style={{ height: 40 }} />
@@ -697,6 +707,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
     color: '#666666',
+    marginBottom: 3,
+  },
+  userMeta: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#8A8A8A',
     marginBottom: 7,
   },
   memberSince: {

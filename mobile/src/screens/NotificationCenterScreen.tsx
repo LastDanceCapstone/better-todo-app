@@ -24,6 +24,7 @@ import {
   NotificationType,
 } from '../config/api';
 import { logger } from '../utils/logger';
+import { handleUnauthorizedIfNeeded } from '../auth/unauthorizedHandler';
 
 // ---------------------------------------------------------------------------
 // Utilities
@@ -163,7 +164,7 @@ function NotificationCard({ notification, onPress, onMarkRead, colors }: Notific
 // NotificationCenterScreen
 // ---------------------------------------------------------------------------
 
-export default function NotificationCenterScreen({ navigation }: any) {
+export default function NotificationCenterScreen({ navigation, onSessionExpired }: any) {
   const { colors } = useTheme();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
@@ -183,6 +184,10 @@ export default function NotificationCenterScreen({ navigation }: any) {
       setNotifications(toSortedNotifications(data));
       setError(null);
     } catch (err) {
+      if (await handleUnauthorizedIfNeeded({ error: err, source: 'NotificationCenter.fetchNotifications', onSessionExpired })) {
+        return;
+      }
+
       logger.warn('Failed to fetch notifications');
       setError('Failed to load notifications. Please try again.');
     } finally {
@@ -237,6 +242,10 @@ export default function NotificationCenterScreen({ navigation }: any) {
       try {
         await markNotificationAsRead(notification.id);
       } catch (err) {
+        if (await handleUnauthorizedIfNeeded({ error: err, source: 'NotificationCenter.handleMarkRead', onSessionExpired })) {
+          return;
+        }
+
         logger.warn('Failed to mark notification as read');
         // Revert on failure
         setNotifications((prev) =>
@@ -262,6 +271,10 @@ export default function NotificationCenterScreen({ navigation }: any) {
           navigation.navigate('TaskDetails', { taskId: notification.taskId });
           return;
         } catch (error: any) {
+          if (await handleUnauthorizedIfNeeded({ error, source: 'NotificationCenter.handlePress', onSessionExpired })) {
+            return;
+          }
+
           if (error instanceof ApiError && error.status === 404) {
             Alert.alert('Task unavailable', 'This task no longer exists or is no longer accessible.');
             return;
@@ -276,7 +289,7 @@ export default function NotificationCenterScreen({ navigation }: any) {
         navigation.navigate('Main');
       }
     },
-    [handleMarkRead, navigation],
+    [handleMarkRead, navigation, onSessionExpired],
   );
 
   const unreadCount = notifications.filter((n) => !n.isRead).length;

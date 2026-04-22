@@ -2,13 +2,14 @@ import React from 'react';
 import { render, waitFor } from '@testing-library/react-native';
 import * as SecureStore from 'expo-secure-store';
 import App from '../App';
-import { getTasks } from '../src/config/api';
+import { getTasks, getUserProfile } from '../src/config/api';
 
 jest.mock('../src/config/api', () => {
   const actual = jest.requireActual('../src/config/api');
   return {
     ...actual,
     getTasks: jest.fn(),
+    getUserProfile: jest.fn(),
     deleteAuthToken: jest.fn(),
   };
 });
@@ -109,6 +110,19 @@ describe('auth bootstrap', () => {
   it('loads authenticated state when a token exists', async () => {
     (SecureStore.getItemAsync as jest.Mock).mockResolvedValue('token-present');
     (getTasks as jest.Mock).mockResolvedValue([]);
+    (getUserProfile as jest.Mock).mockResolvedValue({
+      id: 'user-1',
+      firstName: 'Test',
+      lastName: 'User',
+      email: 'test@example.com',
+      timezone: 'UTC',
+      emailVerified: true,
+      avatarUrl: null,
+      authProvider: 'local',
+      canResetPassword: true,
+      isPrivateRelayEmail: false,
+      createdAt: '2026-04-20T00:00:00.000Z',
+    });
 
     const screen = render(<App />);
 

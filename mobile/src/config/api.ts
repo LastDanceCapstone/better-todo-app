@@ -840,7 +840,9 @@ export type UserProfile = {
 	timezone: string;
 	emailVerified: boolean;
   avatarUrl: string | null;
-  authProvider: 'local' | 'google';
+	authProvider: 'local' | 'google' | 'apple';
+	canResetPassword: boolean;
+	isPrivateRelayEmail: boolean;
   createdAt: string;
 };
 
@@ -869,8 +871,8 @@ export async function getUserProfile(): Promise<UserProfile> {
 }
 
 export async function updateUserProfile(data: {
-  firstName?: string;
-  lastName?: string;
+	firstName?: string | null;
+	lastName?: string | null;
 }): Promise<UserProfile> {
   const token = await getAuthToken();
   if (!token) {
@@ -1080,7 +1082,13 @@ type AuthResponse = {
 		firstName: string | null;
 		lastName: string | null;
 		email: string;
+		timezone: string;
+		emailVerified: boolean;
 		avatarUrl: string | null;
+		authProvider: 'local' | 'google' | 'apple';
+		canResetPassword: boolean;
+		isPrivateRelayEmail: boolean;
+		createdAt: string;
 	};
 };
 

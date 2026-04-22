@@ -22,6 +22,7 @@ model User {
   password  String?
   authProvider AuthProvider @default(local)
   googleId  String? @unique
+  appleId   String? @unique
   resetPasswordToken     String?   @unique
   resetPasswordExpiresAt DateTime?
   createdAt DateTime @default(now())
@@ -93,6 +94,7 @@ enum TaskPriority {
 enum AuthProvider {
   local
   google
+  apple
 }
 
 enum NotificationType {

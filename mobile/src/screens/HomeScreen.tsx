@@ -4,7 +4,7 @@ import { View, Text, TouchableOpacity, FlatList, StyleSheet, Alert, ActivityIndi
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Notifications from 'expo-notifications';
 import { useTheme, useThemePreference } from '../theme';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -13,7 +13,6 @@ import SwipeableTaskCard from '../components/SwipeableTaskCard';
 import NotificationBell from '../components/NotificationBell';
 import {
   ApiError,
-  deleteAuthToken,
   getTasks,
   getUnreadNotificationCount,
   getUserFriendlyErrorMessage,
@@ -24,10 +23,14 @@ import {
 import { Confetti } from '../components/Confetti';
 import { useCompletionCelebration } from '../hooks/useCompletionCelebration';
 import { logger } from '../utils/logger';
+import { useAuth } from '../auth/AuthContext';
+import { isAuthExitInProgress } from '../auth/authExitState';
+import { handleUnauthorizedIfNeeded } from '../auth/unauthorizedHandler';
 
-export default function HomeScreen({ route, navigation }: any) {
+export default function HomeScreen({ route, navigation, onSessionExpired }: any) {
   const { colors } = useTheme();
   const { currentTheme } = useThemePreference();
+  const { setAuthenticatedUser, user } = useAuth();
   const { isCelebrating, triggerCelebration } = useCompletionCelebration();
   const lastHandledCompletionEventIdRef = useRef<string | null>(null);
   const lastCelebrationAtRef = useRef(0);
@@ -37,7 +40,6 @@ export default function HomeScreen({ route, navigation }: any) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [user, setUser] = useState<any>(null);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -65,28 +67,6 @@ export default function HomeScreen({ route, navigation }: any) {
     triggerLightHaptic();
     setTab(nextTab);
   };
-
-  // Get user data from route params or AsyncStorage
-  useEffect(() => {
-    const getUserData = async () => {
-      try {
-        // First try to get from route params (when coming from login)
-        if (route?.params?.user) {
-          setUser(route.params.user);
-        } else {
-          // Otherwise get from AsyncStorage
-          const storedUser = await AsyncStorage.getItem('user');
-          if (storedUser) {
-            setUser(JSON.parse(storedUser));
-          }
-        }
-      } catch (error) {
-        logger.warn('Failed to read user data from local storage');
-      }
-    };
-
-    getUserData();
-  }, [route]);
 
   useEffect(() => {
     return () => {
@@ -176,6 +156,13 @@ export default function HomeScreen({ route, navigation }: any) {
 
   const loadAvatar = async () => {
     try {
+      const authAvatar = user?.avatarUrl?.trim() || null;
+      if (authAvatar) {
+        setAvatarUri(authAvatar);
+        setAvatarLoadFailed(false);
+        return;
+      }
+
       const savedAvatar = await AsyncStorage.getItem('userAvatar');
       if (savedAvatar) {
         setAvatarUri(savedAvatar.trim());
@@ -201,16 +188,12 @@ export default function HomeScreen({ route, navigation }: any) {
   const refreshAvatarFromProfile = async () => {
     try {
       const profile = await getUserProfile();
+      await setAuthenticatedUser(profile);
       const nextAvatar = profile.avatarUrl?.trim() || null;
       if (nextAvatar) {
         await AsyncStorage.setItem('userAvatar', nextAvatar);
       } else {
         await AsyncStorage.removeItem('userAvatar');
-      }
-      const storedUser = await AsyncStorage.getItem('user');
-      if (storedUser) {
-        const parsed = JSON.parse(storedUser);
-        await AsyncStorage.setItem('user', JSON.stringify({ ...parsed, avatarUrl: nextAvatar }));
       }
       setAvatarUri(nextAvatar);
       setAvatarLoadFailed(false);
@@ -233,16 +216,9 @@ export default function HomeScreen({ route, navigation }: any) {
     } catch (error: any) {
       if (error instanceof ApiError && error.status === 401) {
         logger.warn('Failed to fetch tasks: unauthorized');
-        await deleteAuthToken();
-        await AsyncStorage.removeItem('user');
-        await AsyncStorage.removeItem('userAvatar');
-
-        Alert.alert('Session expired', 'Please log in again.', [
-          {
-            text: 'OK',
-            onPress: () => navigation.reset({ index: 0, routes: [{ name: 'Login' }] }),
-          },
-        ]);
+        if (!isAuthExitInProgress()) {
+          await onSessionExpired?.();
+        }
         return;
       }
 
@@ -366,6 +342,10 @@ export default function HomeScreen({ route, navigation }: any) {
         showFeedback('Task updated');
       }
     } catch (error) {
+      if (await handleUnauthorizedIfNeeded({ error, source: 'HomeScreen.handleStatusChange', onSessionExpired })) {
+        return;
+      }
+
       logger.warn('Failed to update task status');
       Alert.alert('Error', 'Failed to update task status');
     } finally {
@@ -459,9 +439,8 @@ export default function HomeScreen({ route, navigation }: any) {
     [currentTheme]
   );
   const isDark = currentTheme === 'dark';
-  const headerBorderColor = isDark ? 'rgba(90, 113, 152, 0.32)' : 'rgba(0, 74, 173, 0.10)';
-  const headerBubblePrimary = isDark ? 'rgba(56, 189, 248, 0.14)' : 'rgba(37, 99, 235, 0.11)';
-  const headerBubbleStroke = isDark ? 'rgba(147, 197, 253, 0.16)' : 'rgba(37, 99, 235, 0.10)';
+  const headerBorderColor = isDark ? 'rgba(90, 113, 152, 0.28)' : 'rgba(0, 74, 173, 0.09)';
+  const avatarBorderColor = isDark ? 'rgba(153, 178, 214, 0.30)' : 'rgba(7, 31, 66, 0.10)';
   const notificationSurface = isDark ? 'rgba(15, 26, 45, 0.92)' : 'rgba(246, 250, 255, 0.96)';
   const tabsSurface = isDark ? 'rgba(14, 24, 41, 0.94)' : 'rgba(255, 255, 255, 0.88)';
   const tabsBorder = isDark ? 'rgba(97, 116, 149, 0.28)' : 'rgba(0, 74, 173, 0.10)';
@@ -469,6 +448,8 @@ export default function HomeScreen({ route, navigation }: any) {
   const inactiveTabTextColor = isDark ? '#A8B6CF' : '#5E6C86';
   const emptySurface = isDark ? 'rgba(15, 24, 40, 0.92)' : 'rgba(255, 255, 255, 0.88)';
   const emptyBorder = isDark ? 'rgba(92, 112, 145, 0.28)' : 'rgba(0, 74, 173, 0.10)';
+
+  const insets = useSafeAreaInsets();
 
   const { activeCount, completedCount } = useMemo(() => {
     const active = tasks.filter((t) => t.status === 'TODO' || t.status === 'IN_PROGRESS').length;
@@ -502,7 +483,7 @@ export default function HomeScreen({ route, navigation }: any) {
 
   if (loading) {
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}> 
+      <SafeAreaView edges={['left', 'right', 'bottom']} style={[styles.container, { backgroundColor: colors.background }]}>
         <LinearGradient
           colors={backgroundGradient}
           start={{ x: 0, y: 0 }}
@@ -513,7 +494,9 @@ export default function HomeScreen({ route, navigation }: any) {
           style={[
             styles.heroHeader,
             {
+              paddingTop: insets.top + 14,
               shadowColor: isDark ? '#020617' : '#8AADE2',
+              borderBottomColor: headerBorderColor,
             },
           ]}
         >
@@ -523,35 +506,13 @@ export default function HomeScreen({ route, navigation }: any) {
             end={{ x: 1, y: 1 }}
             style={StyleSheet.absoluteFillObject}
           />
-          <View style={styles.headerDecorLayer} pointerEvents="none">
-            <View
-              style={[
-                styles.headerBubble,
-                styles.headerBubbleTopRight,
-                {
-                  backgroundColor: headerBubblePrimary,
-                  borderColor: headerBubbleStroke,
-                },
-              ]}
-            />
-            <View
-              style={[
-                styles.headerBubble,
-                styles.headerBubbleBottomLeft,
-                {
-                  backgroundColor: headerBubblePrimary,
-                  borderColor: headerBubbleStroke,
-                },
-              ]}
-            />
-          </View>
           <View style={styles.headerContent}>
             <View style={[styles.avatarPlaceholder, styles.skeletonBlock, { backgroundColor: colors.border }]} />
             <View style={styles.greetingContainer}>
               <View style={[styles.skeletonLineShort, { backgroundColor: colors.border }]} />
               <View style={[styles.skeletonLineLong, { backgroundColor: colors.border }]} />
             </View>
-            <View style={[styles.notificationButton, { backgroundColor: notificationSurface, borderColor: headerBorderColor }]}> 
+            <View style={[styles.notificationButton, { backgroundColor: notificationSurface, borderColor: headerBorderColor }]}>
               <ActivityIndicator size="small" color={colors.primary} />
             </View>
           </View>
@@ -615,7 +576,7 @@ export default function HomeScreen({ route, navigation }: any) {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <Confetti isVisible={isCelebrating} count={40} />
-      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+      <SafeAreaView edges={['left', 'right', 'bottom']} style={[styles.container, { backgroundColor: colors.background }]}>
         <LinearGradient
           colors={backgroundGradient}
           start={{ x: 0, y: 0 }}
@@ -627,7 +588,9 @@ export default function HomeScreen({ route, navigation }: any) {
           style={[
             styles.heroHeader,
             {
+              paddingTop: insets.top + 14,
               shadowColor: isDark ? '#020617' : '#8AADE2',
+              borderBottomColor: headerBorderColor,
             },
           ]}
         >
@@ -637,28 +600,6 @@ export default function HomeScreen({ route, navigation }: any) {
             end={{ x: 1, y: 1 }}
             style={StyleSheet.absoluteFillObject}
           />
-          <View style={styles.headerDecorLayer} pointerEvents="none">
-            <View
-              style={[
-                styles.headerBubble,
-                styles.headerBubbleTopRight,
-                {
-                  backgroundColor: headerBubblePrimary,
-                  borderColor: headerBubbleStroke,
-                },
-              ]}
-            />
-            <View
-              style={[
-                styles.headerBubble,
-                styles.headerBubbleBottomLeft,
-                {
-                  backgroundColor: headerBubblePrimary,
-                  borderColor: headerBubbleStroke,
-                },
-              ]}
-            />
-          </View>
           <View style={styles.headerContent}>
             <Animated.View style={{ transform: [{ scale: avatarScale }] }}>
             <TouchableOpacity
@@ -681,35 +622,38 @@ export default function HomeScreen({ route, navigation }: any) {
                 }).start();
               }}
             >
-              <View style={[styles.avatarShell, { borderColor: headerBorderColor, shadowColor: colors.primary }]}>
-                {sanitizedAvatarUri && !avatarLoadFailed ? (
-                  <Image
-                    source={{ uri: sanitizedAvatarUri }}
-                    style={styles.avatarImage}
-                    onError={() => {
-                      if (__DEV__) {
-                        logger.warn('Avatar image failed to load on Home screen');
-                      }
-                      setAvatarLoadFailed(true);
-                    }}
-                  />
-                ) : (
-                  <LinearGradient
-                    colors={['#0A5DCD', '#004AAD']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.avatarPlaceholder}
-                  >
-                    <Text style={[styles.avatarInitials, { color: '#FFFFFF' }]}>{getInitials()}</Text>
-                  </LinearGradient>
-                )}
+              <View style={[styles.avatarShell, { borderColor: avatarBorderColor }]}>
+                <View style={styles.avatarInner}>
+                  {sanitizedAvatarUri && !avatarLoadFailed ? (
+                    <Image
+                      source={{ uri: sanitizedAvatarUri }}
+                      style={styles.avatarImage}
+                      resizeMode="cover"
+                      onError={() => {
+                        if (__DEV__) {
+                          logger.warn('Avatar image failed to load on Home screen');
+                        }
+                        setAvatarLoadFailed(true);
+                      }}
+                    />
+                  ) : (
+                    <LinearGradient
+                      colors={['#0A5DCD', '#004AAD']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.avatarPlaceholder}
+                    >
+                      <Text style={[styles.avatarInitials, { color: '#FFFFFF' }]}>{getInitials()}</Text>
+                    </LinearGradient>
+                  )}
+                </View>
               </View>
             </TouchableOpacity>
             </Animated.View>
 
             <View style={styles.greetingContainer}>
               <Text style={[styles.greeting, { color: colors.mutedText }]}>{greetingText}</Text>
-              <Text style={[styles.welcome, { color: colors.text }]}>{user?.firstName || 'User'} 👋</Text>
+              <Text style={[styles.welcome, { color: colors.text }]}>{user?.firstName?.trim() || 'User'} 👋</Text>
               <Text style={[styles.subtitle, { color: colors.mutedText }]}>Let's make progress today.</Text>
             </View>
 
@@ -927,14 +871,14 @@ const styles = StyleSheet.create({
   // Hero header
   heroHeader: {
     position: 'relative',
-    paddingHorizontal: 20,
-    paddingTop: 11,
-    paddingBottom: 12,
+    paddingHorizontal: 22,
+    paddingBottom: 18,
     overflow: 'hidden',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 14,
-    elevation: 4,
+    borderBottomWidth: 1,
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.10,
+    shadowRadius: 16,
+    elevation: 5,
   },
   headerContent: {
     position: 'relative',
@@ -943,83 +887,64 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  headerDecorLayer: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    zIndex: 1,
-  },
-  headerBubble: {
-    position: 'absolute',
-    borderRadius: 999,
-    borderWidth: 1,
-    shadowColor: '#0F2F6B',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 1,
-  },
-  headerBubbleTopRight: {
-    width: 132,
-    height: 132,
-    top: -42,
-    right: -24,
-  },
-  headerBubbleBottomLeft: {
-    width: 86,
-    height: 86,
-    bottom: -42,
-    left: -28,
-  },
   
-  // Avatar - Larger (56x56) and more prominent
+  // Avatar - 52×52, more prominent presence
   avatarTouchable: {
-    borderRadius: 22,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   avatarShell: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    borderWidth: 1.2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.10)',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  avatarInner: {
     width: 48,
     height: 48,
     borderRadius: 24,
-    borderWidth: 1,
     overflow: 'hidden',
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.18,
-    shadowRadius: 10,
-    elevation: 4,
   },
   avatarImage: {
-    width: 48,
-    height: 48,
+    width: '100%',
+    height: '100%',
     borderRadius: 24,
   },
   avatarPlaceholder: {
-    width: 48,
-    height: 48,
+    width: '100%',
+    height: '100%',
     borderRadius: 24,
     justifyContent: 'center',
     alignItems: 'center',
   },
   avatarInitials: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '700',
   },
 
   greetingContainer: {
     flex: 1,
-    marginLeft: 10,
+    marginLeft: 12,
     justifyContent: 'center',
   },
   greeting: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '600',
     marginBottom: 1,
-    letterSpacing: 0.35,
+    letterSpacing: 0.4,
   },
   welcome: {
-    fontSize: 21,
-    fontWeight: '700',
+    fontSize: 22,
+    fontWeight: '800',
   },
   subtitle: {
     fontSize: 12,
@@ -1027,17 +952,17 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
   
-  // Notification button - Rounded with touch feedback
+  // Notification button — slightly larger for badge breathing room
   notificationButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    marginLeft: 10,
+    marginLeft: 12,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.10,
     shadowRadius: 8,
     elevation: 3,
   },
@@ -1269,6 +1194,6 @@ const styles = StyleSheet.create({
     borderRadius: 16,
   },
   skeletonBlock: {
-    borderRadius: 24,
+    borderRadius: 26,
   },
 });

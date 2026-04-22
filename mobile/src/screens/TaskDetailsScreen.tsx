@@ -31,6 +31,8 @@ import {
   updateTask,
 } from '../config/api';
 import { logger } from '../utils/logger';
+import { isAuthExitInProgress } from '../auth/authExitState';
+import { isUnauthorizedApiError } from '../auth/unauthorizedHandler';
 
 type Subtask = {
   id: string;
@@ -66,7 +68,7 @@ type EditableSubtask = {
 type TaskDetailsScreenProps = {
   route: any;
   navigation: any;
-  onUnauthorized?: () => void;
+  onUnauthorized?: () => Promise<void> | void;
 };
 
 export default function TaskDetailsScreen({ route, navigation, onUnauthorized }: TaskDetailsScreenProps) {
@@ -113,9 +115,13 @@ export default function TaskDetailsScreen({ route, navigation, onUnauthorized }:
     }).start();
   };
 
-  const handleUnauthorized = () => {
+  const handleUnauthorized = async () => {
+    if (isAuthExitInProgress()) {
+      return;
+    }
+
     if (onUnauthorized) {
-      onUnauthorized();
+      await onUnauthorized();
       return;
     }
 
@@ -142,7 +148,7 @@ export default function TaskDetailsScreen({ route, navigation, onUnauthorized }:
     } catch (error: any) {
       if (error instanceof ApiError) {
         if (error.status === 401) {
-          handleUnauthorized();
+          await handleUnauthorized();
           return;
         }
 
@@ -225,6 +231,11 @@ export default function TaskDetailsScreen({ route, navigation, onUnauthorized }:
       setTask(updatedTask as Task);
       setLocalDueAtIso(updatedTask?.dueAt || '');
     } catch (error: unknown) {
+      if (isUnauthorizedApiError(error)) {
+        await handleUnauthorized();
+        return;
+      }
+
       Alert.alert('Error', getUserFriendlyErrorMessage(error, 'Failed to update due date'));
     } finally {
       setSavingDueAt(false);
@@ -516,7 +527,7 @@ export default function TaskDetailsScreen({ route, navigation, onUnauthorized }:
     } catch (error) {
       logger.warn('Task update failed');
       if (error instanceof ApiError && error.status === 401) {
-        handleUnauthorized();
+        await handleUnauthorized();
         return;
       }
       Alert.alert('Error', getUserFriendlyErrorMessage(error, 'Failed to update task'));
@@ -549,6 +560,10 @@ export default function TaskDetailsScreen({ route, navigation, onUnauthorized }:
       }
     } catch (error) {
       logger.warn('Task status toggle failed');
+      if (error instanceof ApiError && error.status === 401) {
+        await handleUnauthorized();
+        return;
+      }
       Alert.alert('Error', 'Failed to update task status');
     } finally {
       setLoading(false);
@@ -583,6 +598,10 @@ export default function TaskDetailsScreen({ route, navigation, onUnauthorized }:
               ]);
             } catch (error) {
               logger.warn('Task deletion failed');
+              if (error instanceof ApiError && error.status === 401) {
+                await handleUnauthorized();
+                return;
+              }
               Alert.alert('Error', 'Failed to delete task');
             } finally {
               setLoading(false);
@@ -615,7 +634,7 @@ export default function TaskDetailsScreen({ route, navigation, onUnauthorized }:
     } catch (error) {
       logger.warn('Subtask toggle failed');
       if (error instanceof ApiError && error.status === 401) {
-        handleUnauthorized();
+        await handleUnauthorized();
         return;
       }
       Alert.alert('Error', getUserFriendlyErrorMessage(error, 'Failed to update subtask'));

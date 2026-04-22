@@ -110,6 +110,11 @@ export const configureNotificationPresentation = (): void => {
 	notificationHandlerConfigured = true;
 };
 
+export const getNotificationPermissionState = async (): Promise<NotificationPermissionState> => {
+	const permissions = await Notifications.getPermissionsAsync();
+	return toPermissionState(permissions);
+};
+
 export const syncPushNotificationRegistration = async (
 	options: { allowPrompt: boolean },
 ): Promise<{ permissionStatus: NotificationPermissionState; isRegistered: boolean; expoPushToken: string | null }> => {

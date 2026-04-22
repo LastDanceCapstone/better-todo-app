@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../theme';
 import { getUserFriendlyErrorMessage } from '../config/api';
+import { handleUnauthorizedIfNeeded } from '../auth/unauthorizedHandler';
 import {
   getNotificationSettings,
   NotificationSettings,
@@ -22,6 +23,7 @@ import {
 } from '../config/notificationSettings';
 import { logger } from '../utils/logger';
 import {
+  getNotificationPermissionState,
   NotificationPermissionState,
   syncPushNotificationRegistration,
 } from '../services/pushNotifications';
@@ -68,33 +70,51 @@ const SETTING_ITEMS: SettingItem[] = [
   },
 ];
 
-export default function NotificationSettingsScreen({ navigation }: any) {
+export default function NotificationSettingsScreen({ navigation, onSessionExpired }: any) {
   const { colors } = useTheme();
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState<NotificationSettings | null>(null);
   const [permissionStatus, setPermissionStatus] = useState<NotificationPermissionState>('undetermined');
   const [syncingDevice, setSyncingDevice] = useState(false);
 
+  // Ref guard prevents two concurrent loadSettings calls — most commonly caused by
+  // useFocusEffect + useEffect both firing on the initial mount (now fixed: useEffect
+  // removed, but the ref stays as an extra safety net for rapid focus events).
+  const loadingRef = useRef(false);
+
   const loadSettings = useCallback(async () => {
+    // Guard: prevent concurrent invocations (e.g. useEffect + useFocusEffect firing simultaneously on mount)
+    if (loadingRef.current) {
+      return;
+    }
+    loadingRef.current = true;
     setLoading(true);
     try {
       const loaded = await getNotificationSettings();
       setSettings(loaded);
 
-      const pushState = await syncPushNotificationRegistration({ allowPrompt: false });
-      setPermissionStatus(pushState.permissionStatus);
+      // Read-only permission check only — no token fetch, no backend registration call.
+      // Full syncPushNotificationRegistration is reserved for the manual "Refresh" button
+      // so that a transient registration failure never blocks settings from loading.
+      const permState = await getNotificationPermissionState();
+      setPermissionStatus(permState);
     } catch (error) {
+      if (await handleUnauthorizedIfNeeded({ error, source: 'NotificationSettings.loadSettings', onSessionExpired })) {
+        return;
+      }
+
       logger.warn('Failed to load notification settings');
       Alert.alert('Error', 'Failed to load notification settings. Please try again.');
     } finally {
       setLoading(false);
+      loadingRef.current = false;
     }
-  }, []);
+  }, [onSessionExpired]);
 
-  useEffect(() => {
-    loadSettings();
-  }, [loadSettings]);
-
+  // useFocusEffect covers both initial mount and returning to this screen.
+  // The duplicate useEffect has been removed — it was firing a second concurrent
+  // call on every mount, racing with useFocusEffect and causing the loading
+  // spinner to flash twice and potentially show two simultaneous alerts.
   useFocusEffect(
     useCallback(() => {
       void loadSettings();
@@ -114,11 +134,15 @@ export default function NotificationSettingsScreen({ navigation }: any) {
     try {
       await saveNotificationSettings(nextSettings);
     } catch (error) {
+      if (await handleUnauthorizedIfNeeded({ error, source: 'NotificationSettings.updateSetting', onSessionExpired })) {
+        return;
+      }
+
       logger.warn('Failed to save notification settings');
       setSettings(settings);
       Alert.alert('Error', 'Failed to save setting. Please try again.');
     }
-  }, [settings]);
+  }, [onSessionExpired, settings]);
 
   const handleDevicePermissionAction = useCallback(async () => {
     if (permissionStatus === 'denied') {
@@ -141,12 +165,16 @@ export default function NotificationSettingsScreen({ navigation }: any) {
         Alert.alert('Notifications Enabled', 'This device is now registered for Prioritize reminders.');
       }
     } catch (error: unknown) {
+      if (await handleUnauthorizedIfNeeded({ error, source: 'NotificationSettings.handleDevicePermissionAction', onSessionExpired })) {
+        return;
+      }
+
       logger.warn('Failed to sync push notification registration');
       Alert.alert('Error', getUserFriendlyErrorMessage(error, 'Failed to configure push notifications.'));
     } finally {
       setSyncingDevice(false);
     }
-  }, [permissionStatus]);
+  }, [onSessionExpired, permissionStatus]);
 
   const permissionIcon = permissionStatus === 'granted'
     ? 'notifications-active'

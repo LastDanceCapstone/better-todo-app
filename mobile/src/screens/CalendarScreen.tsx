@@ -18,6 +18,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme, useThemePreference } from '../theme';
 import { deleteTaskById, getTasks, getUserFriendlyErrorMessage, updateTask, type Task } from '../config/api';
+import { handleUnauthorizedIfNeeded } from '../auth/unauthorizedHandler';
 import ScreenWrapper from '../components/ScreenWrapper';
 import AnimatedTaskCard from '../components/AnimatedTaskCard';
 import AppButton from '../components/AppButton';
@@ -60,7 +61,7 @@ const formatDisplayDate = (isoDate: string) => {
   });
 };
 
-export default function CalendarScreen({ navigation }: any) {
+export default function CalendarScreen({ navigation, onSessionExpired }: any) {
   const { colors } = useTheme();
   const { currentTheme } = useThemePreference();
   const isDark = currentTheme === 'dark';
@@ -202,6 +203,10 @@ export default function CalendarScreen({ navigation }: any) {
       setTasks(fetchedTasks);
       setScreenError(null);
     } catch (error: unknown) {
+      if (await handleUnauthorizedIfNeeded({ error, source: 'CalendarScreen.loadTasks', onSessionExpired })) {
+        return;
+      }
+
       const message = getUserFriendlyErrorMessage(error, 'Failed to load tasks.');
       setScreenError(message);
       if (tasks.length > 0) {
@@ -305,6 +310,10 @@ export default function CalendarScreen({ navigation }: any) {
             await deleteTaskById(taskId);
             await loadTasks(false);
           } catch (error: unknown) {
+            if (await handleUnauthorizedIfNeeded({ error, source: 'CalendarScreen.onDeleteTask', onSessionExpired })) {
+              return;
+            }
+
             Alert.alert('Delete failed', getUserFriendlyErrorMessage(error, 'Could not delete task.'));
           }
         },
@@ -326,6 +335,10 @@ export default function CalendarScreen({ navigation }: any) {
         });
       }
     } catch (error: unknown) {
+      if (await handleUnauthorizedIfNeeded({ error, source: 'CalendarScreen.onStatusChange', onSessionExpired })) {
+        return;
+      }
+
       Alert.alert('Error', getUserFriendlyErrorMessage(error, 'Failed to update task status.'));
     }
   };

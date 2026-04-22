@@ -20,6 +20,7 @@ type AppEnv = {
   JWT_SECRET: string;
   DATABASE_URL: string;
   GOOGLE_CLIENT_ID: string;
+  APPLE_BUNDLE_ID?: string;
   OPENAI_API_KEY: string;
   OPENAI_MODEL: string;
   WHISPER_MODEL: string;
@@ -220,6 +221,7 @@ export const env: AppEnv = {
   JWT_SECRET: validateJwtSecret(getRequired('JWT_SECRET')),
   DATABASE_URL: getRequired('DATABASE_URL'),
   GOOGLE_CLIENT_ID: getRequired('GOOGLE_CLIENT_ID'),
+  APPLE_BUNDLE_ID: parseOptionalUrl('APPLE_BUNDLE_ID'),
   OPENAI_API_KEY: getRequired('OPENAI_API_KEY'),
   OPENAI_MODEL: process.env.OPENAI_MODEL?.trim() || 'gpt-4o-mini',
   WHISPER_MODEL: process.env.WHISPER_MODEL?.trim() || 'whisper-1',

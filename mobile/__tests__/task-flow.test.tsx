@@ -3,6 +3,7 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import CreateTaskScreen from '../src/screens/CreateTaskScreen';
 import HomeScreen from '../src/screens/HomeScreen';
 import { createTask, getAuthToken, getTasks, updateTask, getUnreadNotificationCount, deleteAuthToken } from '../src/config/api';
+import { AuthProvider } from '../src/auth/AuthContext';
 
 jest.mock('../src/config/api', () => ({
   ...jest.requireActual('../src/config/api'),
@@ -146,7 +147,11 @@ describe('mobile task flow', () => {
     ]);
     (updateTask as jest.Mock).mockResolvedValue({ id: 'task-1', status: 'COMPLETED' });
 
-    const screen = render(<HomeScreen navigation={navigation} route={route} />);
+    const screen = render(
+      <AuthProvider>
+        <HomeScreen navigation={navigation} route={route} />
+      </AuthProvider>
+    );
 
     await act(async () => {
       await Promise.resolve();

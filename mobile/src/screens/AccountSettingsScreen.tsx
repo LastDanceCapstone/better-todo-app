@@ -25,15 +25,18 @@ import {
   UserProfile,
   ApiError,
 } from '../config/api';
-import { clearLocalAuthSession } from '../utils/session';
+import { useAuth } from '../auth/AuthContext';
+import { isAuthExitInProgress } from '../auth/authExitState';
 
 type AccountSettingsScreenProps = {
   navigation: any;
-  onLogout?: () => void;
+  onLogout?: () => Promise<void> | void;
+  onSessionExpired?: () => Promise<void> | void;
 };
 
-export default function AccountSettingsScreen({ navigation, onLogout }: AccountSettingsScreenProps) {
+export default function AccountSettingsScreen({ navigation, onLogout, onSessionExpired }: AccountSettingsScreenProps) {
   const { colors } = useTheme();
+  const { setAuthenticatedUser } = useAuth();
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -59,16 +62,14 @@ export default function AccountSettingsScreen({ navigation, onLogout }: AccountS
     try {
       setLoading(true);
       const data = await getUserProfile();
+      await setAuthenticatedUser(data);
       setProfile(data);
       setFirstName(data.firstName ?? '');
       setLastName(data.lastName ?? '');
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
-        await clearLocalAuthSession();
-        if (onLogout) {
-          onLogout();
-        } else {
-          navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+        if (!isAuthExitInProgress()) {
+          await onSessionExpired?.();
         }
         return;
       }
@@ -82,27 +83,38 @@ export default function AccountSettingsScreen({ navigation, onLogout }: AccountS
     const trimmedFirst = firstName.trim();
     const trimmedLast = lastName.trim();
 
-    if (!trimmedFirst) {
-      Alert.alert('Validation', 'First name cannot be empty.');
+    if (!profile) {
       return;
     }
-    if (!trimmedLast) {
-      Alert.alert('Validation', 'Last name cannot be empty.');
+
+    const updatePayload: { firstName?: string | null; lastName?: string | null } = {};
+    if (trimmedFirst !== (profile.firstName ?? '')) {
+      updatePayload.firstName = trimmedFirst.length > 0 ? trimmedFirst : null;
+    }
+    if (trimmedLast !== (profile.lastName ?? '')) {
+      updatePayload.lastName = trimmedLast.length > 0 ? trimmedLast : null;
+    }
+
+    if (Object.keys(updatePayload).length === 0) {
       return;
     }
 
     try {
       setSaving(true);
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
-      const updated = await updateUserProfile({
-        firstName: trimmedFirst,
-        lastName: trimmedLast,
-      });
+      const updated = await updateUserProfile(updatePayload);
+      await setAuthenticatedUser(updated);
       setProfile(updated);
       setFirstName(updated.firstName ?? '');
       setLastName(updated.lastName ?? '');
       Alert.alert('Saved', 'Your profile has been updated.');
     } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        if (!isAuthExitInProgress()) {
+          await onSessionExpired?.();
+        }
+        return;
+      }
       const message = getUserFriendlyErrorMessage(error, 'Failed to save changes.');
       Alert.alert('Error', message);
     } finally {
@@ -149,14 +161,18 @@ export default function AccountSettingsScreen({ navigation, onLogout }: AccountS
               setDeleteLoading(true);
               void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => undefined);
               await deleteAccount();
-              await clearLocalAuthSession();
               if (onLogout) {
-                onLogout();
+                await onLogout();
               } else {
                 navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
               }
             } catch (error) {
-              void error;
+              if (error instanceof ApiError && error.status === 401) {
+                if (!isAuthExitInProgress()) {
+                  await onSessionExpired?.();
+                }
+                return;
+              }
               Alert.alert('Error', 'Unable to delete account. Please try again.');
             } finally {
               setDeleteLoading(false);
@@ -186,6 +202,12 @@ export default function AccountSettingsScreen({ navigation, onLogout }: AccountS
         ]
       );
     } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        if (!isAuthExitInProgress()) {
+          await onSessionExpired?.();
+        }
+        return;
+      }
       const message = getUserFriendlyErrorMessage(error, 'Failed to send reset email. Please try again.');
       Alert.alert('Error', message);
     } finally {
@@ -197,11 +219,20 @@ export default function AccountSettingsScreen({ navigation, onLogout }: AccountS
     new Date(dateStr).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
   const shortId = (id: string) => `${id.slice(0, 8)}…`;
+  const emailLabel = profile?.isPrivateRelayEmail ? 'Apple private email' : 'Email';
 
   const authProviderLabel =
-    profile?.authProvider === 'google' ? 'Google' : 'Email & Password';
+    profile?.authProvider === 'apple'
+      ? 'Sign in with Apple'
+      : profile?.authProvider === 'google'
+      ? 'Google'
+      : 'Email & Password';
   const authProviderIcon: keyof typeof MaterialIcons.glyphMap =
-    profile?.authProvider === 'google' ? 'g-mobiledata' : 'email';
+    profile?.authProvider === 'apple'
+      ? 'phone-iphone'
+      : profile?.authProvider === 'google'
+      ? 'g-mobiledata'
+      : 'email';
 
   if (loading) {
     return (
@@ -316,7 +347,7 @@ export default function AccountSettingsScreen({ navigation, onLogout }: AccountS
         {/* ACCOUNT — read-only info */}
         <Text style={[styles.sectionLabel, { color: colors.mutedText }]}>ACCOUNT</Text>
         <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <InfoRow icon="email" label="Email" value={profile.email} colors={colors} hasBorder />
+          <InfoRow icon="email" label={emailLabel} value={profile.email} colors={colors} hasBorder />
           <InfoRow
             icon="event"
             label="Member Since"
@@ -340,8 +371,8 @@ export default function AccountSettingsScreen({ navigation, onLogout }: AccountS
           />
         </View>
 
-        {/* SECURITY — only for local auth users */}
-        {profile.authProvider !== 'google' && (
+        {/* SECURITY */}
+        {profile.canResetPassword ? (
           <>
             <Text style={[styles.sectionLabel, { color: colors.mutedText }]}>SECURITY</Text>
             <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -366,6 +397,29 @@ export default function AccountSettingsScreen({ navigation, onLogout }: AccountS
                   <MaterialIcons name="chevron-right" size={20} color={colors.mutedText} />
                 )}
               </TouchableOpacity>
+            </View>
+          </>
+        ) : (
+          <>
+            <Text style={[styles.sectionLabel, { color: colors.mutedText }]}>SECURITY</Text>
+            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
+              <View style={styles.actionRow}>
+                <View style={[styles.actionIconWrap, { backgroundColor: `${colors.primary}18` }]}> 
+                  <MaterialIcons
+                    name={profile.authProvider === 'apple' ? 'phone-iphone' : 'lock-outline'}
+                    size={20}
+                    color={colors.primary}
+                  />
+                </View>
+                <View style={styles.actionTextWrap}>
+                  <Text style={[styles.actionLabel, { color: colors.text }]}>Password Reset</Text>
+                  <Text style={[styles.actionSub, { color: colors.mutedText }]}> 
+                    {profile.authProvider === 'apple'
+                      ? 'This account uses Sign in with Apple.'
+                      : 'This account signs in with Google and does not use a password.'}
+                  </Text>
+                </View>
+              </View>
             </View>
           </>
         )}

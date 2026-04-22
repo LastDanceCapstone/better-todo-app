@@ -13,6 +13,7 @@ import {
   updateAvatarValidation,
   forgotPasswordValidation,
   googleAuthValidation,
+  appleAuthValidation,
   loginValidation,
   noQueryValidation,
   registerValidation,
@@ -29,6 +30,7 @@ import {
   parseManagedAvatarFileKey,
   resolveAvatarDisplayUrl,
 } from '../services/objectStorage';
+import { verifyAppleIdToken } from '../services/appleAuth';
 import { logger } from '../utils/logger';
 import { isValidTimeZone } from '../utils/timezone';
 
@@ -48,7 +50,11 @@ type AuthResponseUser = {
   lastName: string | null;
   email: string;
   timezone?: string;
+  emailVerified?: boolean;
   avatarUrl?: string | null;
+  authProvider?: 'local' | 'google' | 'apple';
+  password?: string | null;
+  createdAt?: Date;
 };
 
 type RateLimitBucket = {
@@ -168,7 +174,7 @@ const createSessionToken = (userId: string, email: string) => {
     env.JWT_SECRET,
     {
       algorithm: 'HS256',
-      expiresIn: '24h',
+      expiresIn: '30d',
       issuer: JWT_ISSUER,
       audience: JWT_AUDIENCE,
     }
@@ -180,22 +186,35 @@ const applyAuthCookie = (res: any, token: string) => {
     httpOnly: true,
     sameSite: 'strict',
     secure: env.isProduction,
-    maxAge: 24 * 60 * 60 * 1000,
+    maxAge: 30 * 24 * 60 * 60 * 1000,
   });
+};
+
+const isApplePrivateRelayEmail = (email: string | null | undefined) => {
+  return typeof email === 'string' && email.trim().toLowerCase().endsWith('@privaterelay.appleid.com');
+};
+
+const buildClientUser = (user: AuthResponseUser, avatarUrlOverride?: string | null) => {
+  return {
+    id: user.id,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    email: user.email,
+    timezone: user.timezone ?? 'UTC',
+    emailVerified: Boolean(user.emailVerified),
+    avatarUrl: avatarUrlOverride !== undefined ? avatarUrlOverride : (user.avatarUrl ?? null),
+    authProvider: user.authProvider ?? 'local',
+    canResetPassword: Boolean(user.password),
+    isPrivateRelayEmail: isApplePrivateRelayEmail(user.email),
+    createdAt: user.createdAt ? user.createdAt.toISOString() : new Date().toISOString(),
+  };
 };
 
 const buildAuthResponse = (user: AuthResponseUser, token: string, message = 'Login successful') => {
   return {
     message,
     token,
-    user: {
-      id: user.id,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      email: user.email,
-      timezone: user.timezone ?? 'UTC',
-      avatarUrl: user.avatarUrl ?? null,
-    },
+    user: buildClientUser(user),
   };
 };
 
@@ -553,6 +572,190 @@ router.post('/auth/google', authRouteLimiter, googleAuthValidation, async (req, 
   }
 });
 
+/**
+ * @swagger
+ * /auth/apple:
+ *   post:
+ *     tags: [Authentication]
+ *     summary: Sign in or sign up with Apple
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - idToken
+ *             properties:
+ *               idToken:
+ *                 type: string
+ *                 description: Apple identity token from Sign in with Apple flow
+ *               user:
+ *                 type: object
+ *                 description: User info from Apple (only provided on first sign-in)
+ *                 properties:
+ *                   name:
+ *                     type: object
+ *                     properties:
+ *                       firstName:
+ *                         type: string
+ *                       lastName:
+ *                         type: string
+ *                   email:
+ *                     type: string
+ *     responses:
+ *       200:
+ *         description: Login successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                 token:
+ *                   type: string
+ *                 user:
+ *                   $ref: '#/components/schemas/User'
+ *       400:
+ *         description: Missing or invalid token
+ *       401:
+ *         description: Invalid Apple token
+ */
+router.post('/auth/apple', authRouteLimiter, appleAuthValidation, async (req, res) => {
+  try {
+    const { idToken, user: appleUserInfo } = req.body;
+
+    if (!env.APPLE_BUNDLE_ID) {
+      logger.error('Apple Sign-In is not configured: APPLE_BUNDLE_ID env var is not set. Set it to your app bundle ID (e.g. com.example.app) in Railway environment variables.');
+      return res.status(503).json({ error: 'Apple Sign-In is not configured on this server' });
+    }
+
+    let verificationResult;
+    try {
+      verificationResult = await verifyAppleIdToken(idToken, env.APPLE_BUNDLE_ID);
+    } catch (tokenError) {
+      const reason = tokenError instanceof Error ? tokenError.message : 'unknown';
+      logger.warn(`Apple token verification failed: ${reason}`);
+      return res.status(401).json({ error: 'Invalid or expired Apple identity token' });
+    }
+
+    const { userId: appleId, email: appleEmail } = verificationResult;
+
+    if (!appleId) {
+      return res.status(401).json({ error: 'Invalid Apple identity token' });
+    }
+
+    // Normalize the email from the token if present
+    let email = '';
+    if (appleEmail) {
+      email = appleEmail.toLowerCase().trim();
+    }
+
+    // Try to find existing user by appleId first
+    let existingUserByAppleId = await prisma.user.findUnique({
+      where: { appleId },
+    }) as any;
+
+    if (existingUserByAppleId) {
+      // User previously logged in with Apple - just log them in
+      const token = createSessionToken(existingUserByAppleId.id, existingUserByAppleId.email);
+      const authResponse = buildAuthResponse(existingUserByAppleId, token);
+      if (authResponse.user.avatarUrl) {
+        try {
+          authResponse.user.avatarUrl = await resolveAvatarDisplayUrl(authResponse.user.avatarUrl);
+        } catch {}
+      }
+      applyAuthCookie(res, token);
+      return res.json(authResponse);
+    }
+
+    if (!email) {
+      return res.status(400).json({
+        error: 'Apple did not provide an email for this account. Please retry Apple Sign-In.',
+        code: 'APPLE_EMAIL_MISSING',
+      });
+    }
+
+    // No existing Apple user - check if there's a user with the same email
+    let existingUserByEmail = null;
+    if (email) {
+      existingUserByEmail = await prisma.user.findUnique({
+        where: { email },
+      }) as any;
+    }
+
+    let user;
+
+    if (existingUserByEmail) {
+      // User exists with this email from another auth provider (local or Google)
+      // Strategy: Link the Apple ID to the existing account if they don't have a password
+      // (indicating they're a social login user), otherwise reject to prevent account confusion
+      
+      if (existingUserByEmail.password && existingUserByEmail.authProvider === 'local') {
+        // User has email/password account - don't auto-link
+        // Return clear message that they should use their existing method
+        return res.status(409).json({
+          error: 'An account with this email already exists. Please sign in with your password or use the original sign-in method.',
+          code: 'ACCOUNT_EXISTS',
+          email: existingUserByEmail.email,
+        });
+      }
+
+      // For social login users, link the Apple ID
+      user = await prisma.user.update({
+        where: { id: existingUserByEmail.id },
+        data: {
+          appleId,
+          authProvider: 'apple',
+          isVerified: true,
+          emailVerified: true,
+        },
+      } as any);
+    } else {
+      // Create new user account
+      const firstName =
+        typeof appleUserInfo?.name?.firstName === 'string'
+          ? appleUserInfo.name.firstName.trim()
+          : null;
+      const lastName =
+        typeof appleUserInfo?.name?.lastName === 'string'
+          ? appleUserInfo.name.lastName.trim()
+          : null;
+
+      user = await prisma.user.create({
+        data: {
+          email,
+          firstName,
+          lastName,
+          appleId,
+          isVerified: true,
+          authProvider: 'apple',
+          emailVerified: true,
+          password: null,
+        },
+      } as any);
+    }
+
+    if (!user) {
+      return res.status(500).json({ error: 'Failed to authenticate user' });
+    }
+
+    const token = createSessionToken(user.id, user.email);
+    const appleAuthResponse = buildAuthResponse(user, token);
+    if (appleAuthResponse.user.avatarUrl) {
+      try {
+        appleAuthResponse.user.avatarUrl = await resolveAvatarDisplayUrl(appleAuthResponse.user.avatarUrl);
+      } catch {}
+    }
+    applyAuthCookie(res, token);
+    return res.json(appleAuthResponse);
+  } catch (error) {
+    logger.error('Apple authentication failed');
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 router.post('/forgot-password', sensitiveAuthRouteLimiter, forgotPasswordValidation, async (req, res) => {
   try {
     const email = normalizeEmail(req.body?.email);
@@ -841,6 +1044,7 @@ router.get('/user/profile', authenticateToken, noQueryValidation, async (req: an
         emailVerified: true,
         avatarUrl: true,
         authProvider: true,
+        password: true,
         createdAt: true,
       },
     });
@@ -856,7 +1060,7 @@ router.get('/user/profile', authenticateToken, noQueryValidation, async (req: an
       } catch {}
     }
 
-    return res.json({ user: { ...user, avatarUrl: displayAvatarUrl } });
+    return res.json({ user: buildClientUser(user, displayAvatarUrl) });
   } catch (error) {
     logger.error('Profile fetch failed');
     return res.status(500).json({ error: 'Internal server error' });
@@ -909,7 +1113,7 @@ router.patch('/user/profile', authenticateToken, updateProfileValidation, async 
   try {
     const { firstName, lastName, timezone } = req.body;
 
-    const updateData: { firstName?: string; lastName?: string; timezone?: string } = {};
+    const updateData: { firstName?: string | null; lastName?: string | null; timezone?: string } = {};
 
     if (firstName !== undefined) {
       updateData.firstName = firstName;
@@ -940,6 +1144,7 @@ router.patch('/user/profile', authenticateToken, updateProfileValidation, async 
         emailVerified: true,
         avatarUrl: true,
         authProvider: true,
+        password: true,
         createdAt: true,
       },
     });
@@ -951,7 +1156,7 @@ router.patch('/user/profile', authenticateToken, updateProfileValidation, async 
       } catch {}
     }
 
-    return res.json({ user: { ...user, avatarUrl: displayAvatarUrl } });
+    return res.json({ user: buildClientUser(user, displayAvatarUrl) });
   } catch (error) {
     logger.error('Profile update failed');
     return res.status(500).json({ error: 'Internal server error' });
@@ -996,6 +1201,7 @@ router.patch('/user/profile/avatar', authenticateToken, updateAvatarValidation, 
         emailVerified: true,
         avatarUrl: true,
         authProvider: true,
+        password: true,
         createdAt: true,
       },
     });
@@ -1015,7 +1221,7 @@ router.patch('/user/profile/avatar', authenticateToken, updateAvatarValidation, 
       } catch {}
     }
 
-    return res.json({ user: { ...user, avatarUrl: displayAvatarUrl } });
+    return res.json({ user: buildClientUser(user, displayAvatarUrl) });
   } catch (error) {
     logger.error('Avatar update failed');
     return res.status(500).json({ error: 'Internal server error' });
