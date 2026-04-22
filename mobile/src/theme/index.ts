@@ -1,2 +1,2 @@
-export { ThemeProvider, useThemePreference, useTheme } from './ThemeProvider';
-export type { ThemePreference, ThemeVariant, AppColors, AppTheme } from './ThemeProvider';
+export { useTheme, useThemePreference, ThemeProvider } from './ThemeProvider';
+export type { AppColors, AppTheme, ThemePreference, ThemeVariant } from './ThemeProvider';
